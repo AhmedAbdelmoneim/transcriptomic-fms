@@ -7,7 +7,13 @@ Common interface for generating embeddings from transcriptomic foundation models
 ### Installation
 
 ```bash
+# Install base dependencies
 uv sync
+
+# Install dependencies for specific models
+make install-model MODEL=scgpt
+# or
+uv sync --extra scgpt
 ```
 
 ### List Available Models
@@ -113,6 +119,62 @@ make embed MODEL=pca INPUT=data/test.h5ad OUTPUT=output/pca.npy \
     MODEL_ARGS="--n-components 100 --use-hvg"
 ```
 
+### scGPT
+
+scGPT foundation model embeddings. Requires scGPT installation and model checkpoint.
+
+**Installation:**
+```bash
+# Recommended: use make command
+make install-model MODEL=scgpt
+
+# Or manually
+uv sync --extra scgpt
+# or
+pip install scgpt "torch<=2.2.2" "numpy<2" gdown
+```
+
+**Arguments:**
+- `--model-dir <path>`: Path to scGPT model directory (must contain `best_model.pt`, `args.json`, `vocab.json`). 
+  If not provided and `--auto-download` is True, model will be downloaded automatically.
+- `--n-hvg <int>`: Number of highly variable genes to select (default: 1200). Ignored if `--hvg-list` is provided.
+  Set to 0 or omit to use all genes.
+- `--hvg-list <path>`: Path to file containing pre-computed HVG list (one gene per line). 
+  If provided, `--n-hvg` is ignored. The file should contain one gene symbol per line.
+- `--n-bins <int>`: Number of bins for value binning (default: 51)
+- `--batch-size <int>`: Batch size for embedding (default: 64)
+- `--device <str>`: Device to use ('cuda' or 'cpu', auto-detects if not specified)
+- `--auto-download`: Automatically download model if not found (default: True)
+- `--download-dir <path>`: Directory to download model to (default: `models/scGPT_human` in project root)
+
+**Gene Symbol Requirements:**
+The input AnnData must have gene symbols available in one of these formats:
+- `var.index` contains gene symbols (most common)
+- `var['gene_symbols']` column exists
+- `var['gene_name']` column exists (fallback)
+
+**Examples:**
+```bash
+# Auto-download model (default behavior)
+make embed MODEL=scgpt INPUT=data/test.h5ad OUTPUT=output/scgpt.npy
+
+# Use existing model directory
+make embed MODEL=scgpt INPUT=data/test.h5ad OUTPUT=output/scgpt.npy \
+    MODEL_ARGS="--model-dir /path/to/scGPT_human --batch-size 32"
+
+# Use pre-computed HVG list from file
+make embed MODEL=scgpt INPUT=data/test.h5ad OUTPUT=output/scgpt.npy \
+    MODEL_ARGS="--hvg-list /path/to/hvg_genes.txt"
+
+# Use all genes (no HVG filtering)
+make embed MODEL=scgpt INPUT=data/test.h5ad OUTPUT=output/scgpt.npy \
+    MODEL_ARGS="--n-hvg 0"
+
+# Disable auto-download
+make embed MODEL=scgpt INPUT=data/test.h5ad OUTPUT=output/scgpt.npy \
+    MODEL_ARGS="--model-dir /path/to/scGPT_human --no-auto-download"
+```
+
 ## HPC Details
 
 ### Default SLURM Options
@@ -131,6 +193,32 @@ sbatch --time=8:00:00 --mem=128G transcriptomic_fms/hpc/run_job.sh embed ...
 ### GPU Support
 
 GPU access is automatically detected from SLURM environment variables. The `--gres=gpu:1` flag is included by default in `run_job.sh`.
+
+## Dependency Management
+
+### Installing Model Dependencies
+
+Each model can have optional dependencies defined in `pyproject.toml`:
+
+```bash
+# Install dependencies for a specific model
+make install-model MODEL=scgpt
+
+# This runs: uv sync --extra scgpt
+```
+
+### Model-Specific Containers
+
+For HPC, models can have their own container definitions with model-specific dependencies:
+
+```bash
+# Build model-specific container
+make build-model-container MODEL=scgpt
+
+# This creates: transcriptomic-fms-scgpt.sif
+```
+
+Model containers are located in `transcriptomic_fms/models/containers/{model_name}/Singularity.def`.
 
 ## Development
 

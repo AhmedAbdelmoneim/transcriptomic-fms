@@ -43,7 +43,28 @@ embed:
 list-models:
 	uv run python -m transcriptomic_fms.cli.main list
 
-## Set up HPC environment (build Apptainer container)
+## Install dependencies for a specific model
+## Usage: make install-model MODEL=<model_name>
+## Example: make install-model MODEL=scgpt
+.PHONY: install-model
+install-model:
+	@if [ -z "$(MODEL)" ]; then \
+		echo "Usage: make install-model MODEL=<model_name>"; \
+		echo ""; \
+		echo "Available models:"; \
+		uv run python -m transcriptomic_fms.cli.main list; \
+		exit 1; \
+	fi
+	@echo "Checking dependencies for $(MODEL)..."
+	@DEP_GROUP=$$(uv run python -c "from transcriptomic_fms.models import get_model; m = get_model('$(MODEL)'); print(m.get_optional_dependency_group() or '')" 2>/dev/null); \
+	if [ -z "$$DEP_GROUP" ]; then \
+		echo "Model $(MODEL) has no special dependencies."; \
+	else \
+		echo "Installing dependencies for $(MODEL) (group: $$DEP_GROUP)..."; \
+		uv sync --extra $$DEP_GROUP; \
+	fi
+
+## Set up HPC environment (build base Apptainer container)
 .PHONY: setup-hpc
 setup-hpc:
 	@if [ ! -f "transcriptomic_fms/hpc/setup_hpc.sh" ]; then \
@@ -51,6 +72,39 @@ setup-hpc:
 		exit 1; \
 	fi
 	bash transcriptomic_fms/hpc/setup_hpc.sh
+
+## Build model-specific container
+## Usage: make build-model-container MODEL=<model_name>
+## Example: make build-model-container MODEL=scgpt
+.PHONY: build-model-container
+build-model-container:
+	@if [ -z "$(MODEL)" ]; then \
+		echo "Usage: make build-model-container MODEL=<model_name>"; \
+		echo ""; \
+		echo "Available models with containers:"; \
+		ls -d transcriptomic_fms/models/containers/*/ 2>/dev/null | sed 's|transcriptomic_fms/models/containers/||; s|/||' || echo "  (none found)"; \
+		exit 1; \
+	fi
+	@if [ ! -f "transcriptomic_fms/models/containers/$(MODEL)/Singularity.def" ]; then \
+		echo "Error: Container definition not found for model $(MODEL)"; \
+		echo "Expected: transcriptomic_fms/models/containers/$(MODEL)/Singularity.def"; \
+		exit 1; \
+	fi
+	@if ! command -v apptainer &> /dev/null; then \
+		echo "Error: Apptainer is not available. Please load the Apptainer module:"; \
+		echo "  module load apptainer"; \
+		exit 1; \
+	fi
+	@echo "Building container for model $(MODEL)..."
+	@CONTAINER_NAME="transcriptomic-fms-$(MODEL).sif"; \
+	CONTAINER_DEF="transcriptomic_fms/models/containers/$(MODEL)/Singularity.def"; \
+	if [ -f "$$CONTAINER_NAME" ]; then \
+		echo "Warning: $$CONTAINER_NAME already exists. Removing it..."; \
+		rm -f "$$CONTAINER_NAME"; \
+	fi; \
+	# Build from project root so file paths in Singularity.def resolve correctly
+	apptainer build "$$CONTAINER_NAME" "$$CONTAINER_DEF" && \
+	echo "Container built successfully: $$CONTAINER_NAME"
 
 ## Run embedding job on HPC (requires SLURM)
 ## Usage: make hpc-embed MODEL=<model_name> INPUT=<path/to/input.h5ad> OUTPUT=<path/to/output.npy> [MODEL_ARGS="--arg1 value1 --arg2"]

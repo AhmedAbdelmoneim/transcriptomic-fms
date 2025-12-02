@@ -53,8 +53,37 @@ else
     cd "$PROJ_ROOT"
 fi
 
-# Set up paths
-export APPTAINER_IMAGE="${APPTAINER_IMAGE:-$PROJ_ROOT/transcriptomic-fms.sif}"
+# Detect model name from command arguments to select appropriate container
+MODEL_NAME=""
+PREV_ARG=""
+for arg in "$@"; do
+    if [ "$PREV_ARG" = "--model" ] || [ "$PREV_ARG" = "-m" ]; then
+        MODEL_NAME="$arg"
+        break
+    elif [[ "$arg" == --model=* ]]; then
+        MODEL_NAME="${arg#--model=}"
+        break
+    fi
+    PREV_ARG="$arg"
+done
+
+# Determine which container to use
+# Check for model-specific container first, fall back to base container
+if [ -n "$MODEL_NAME" ]; then
+    MODEL_CONTAINER="$PROJ_ROOT/transcriptomic-fms-${MODEL_NAME}.sif"
+    if [ -f "$MODEL_CONTAINER" ]; then
+        export APPTAINER_IMAGE="$MODEL_CONTAINER"
+        echo "Using model-specific container: $APPTAINER_IMAGE"
+    else
+        echo "Model-specific container not found: $MODEL_CONTAINER"
+        echo "Falling back to base container"
+        export APPTAINER_IMAGE="${APPTAINER_IMAGE:-$PROJ_ROOT/transcriptomic-fms.sif}"
+    fi
+else
+    # No model specified, use base container
+    export APPTAINER_IMAGE="${APPTAINER_IMAGE:-$PROJ_ROOT/transcriptomic-fms.sif}"
+fi
+
 export DATA_DIR="${DATA_DIR:-$PROJ_ROOT/data}"
 export OUTPUT_DIR="${OUTPUT_DIR:-$PROJ_ROOT/output}"
 
@@ -69,11 +98,20 @@ if [ ! -f "$APPTAINER_IMAGE" ]; then
     echo "Current working directory: $(pwd)"
     echo "Project root: $PROJ_ROOT"
     echo "SLURM_SUBMIT_DIR: ${SLURM_SUBMIT_DIR:-not set}"
+    if [ -n "$MODEL_NAME" ]; then
+        echo "Model: $MODEL_NAME"
+        echo ""
+        echo "To build model-specific container:"
+        echo "  make build-model-container MODEL=$MODEL_NAME"
+    fi
     echo ""
     echo "Please ensure:"
-    echo "  1. You've run ./transcriptomic_fms/hpc/setup_hpc.sh to build the container"
-    echo "  2. The container image exists at: $PROJ_ROOT/transcriptomic-fms.sif"
-    echo "  3. You're submitting the job from the project root directory"
+    echo "  1. You've run ./transcriptomic_fms/hpc/setup_hpc.sh to build the base container"
+    if [ -n "$MODEL_NAME" ]; then
+        echo "  2. You've run 'make build-model-container MODEL=$MODEL_NAME' to build model container"
+    fi
+    echo "  3. The container image exists at: $APPTAINER_IMAGE"
+    echo "  4. You're submitting the job from the project root directory"
     echo ""
     echo "If the image is in a different location, set APPTAINER_IMAGE environment variable:"
     echo "  export APPTAINER_IMAGE=/path/to/transcriptomic-fms.sif"

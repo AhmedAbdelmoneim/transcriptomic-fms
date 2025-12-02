@@ -24,7 +24,7 @@ class PCAModel(BaseEmbeddingModel):
     ):
         """
         Initialize PCA model.
-        
+
         Args:
             model_name: Model identifier
             n_components: Number of PCA components
@@ -39,9 +39,7 @@ class PCAModel(BaseEmbeddingModel):
         self.pca_model: Optional[PCA] = None
         self.hvg_genes: Optional[list[str]] = None
 
-    def preprocess(
-        self, adata: sc.AnnData, output_path: Optional[Path] = None
-    ) -> sc.AnnData:
+    def preprocess(self, adata: sc.AnnData, output_path: Optional[Path] = None) -> sc.AnnData:
         """Preprocess data: normalize, log transform, optionally select HVGs."""
         adata = adata.copy()
 
@@ -52,9 +50,7 @@ class PCAModel(BaseEmbeddingModel):
         # Select HVGs if requested
         if self.use_hvg:
             sc.pp.highly_variable_genes(adata, n_top_genes=self.n_hvg)
-            self.hvg_genes = adata.var_names[
-                adata.var["highly_variable"]
-            ].tolist()
+            self.hvg_genes = adata.var_names[adata.var["highly_variable"]].tolist()
             adata = adata[:, self.hvg_genes].copy()
 
         # Scale
@@ -90,7 +86,65 @@ class PCAModel(BaseEmbeddingModel):
         # Transform
         embeddings = self.pca_model.transform(X)
 
+        # Validate embeddings before returning
+        self.validate_embeddings(embeddings, adata.n_obs)
+
         return embeddings
+
+    def validate_embeddings(self, embeddings: np.ndarray, n_cells: int) -> None:
+        """
+        Validate that embeddings have correct shape and properties.
+
+        Overrides base class to add PCA-specific validation.
+        """
+        # Call base class validation
+        super().validate_embeddings(embeddings, n_cells)
+
+        # Additional PCA-specific validation
+        if embeddings.shape[1] != self.n_components:
+            raise ValueError(
+                f"Embeddings dimension mismatch: expected {self.n_components} components, "
+                f"got {embeddings.shape[1]}"
+            )
+
+    def get_container_command(
+        self,
+        adata_path: Path,
+        output_path: Path,
+        **kwargs: Any,
+    ) -> list[str]:
+        """
+        Get command to run this model in a container.
+
+        Overrides base class to include PCA-specific arguments.
+        """
+        cmd = [
+            "python",
+            "-m",
+            "transcriptomic_fms.cli.main",
+            "embed",
+            "--model",
+            self.model_name,
+            "--input",
+            str(adata_path),
+            "--output",
+            str(output_path),
+        ]
+
+        # Add PCA-specific arguments
+        if self.n_components:
+            cmd.extend(["--n-components", str(self.n_components)])
+        if self.use_hvg:
+            cmd.append("--use-hvg")
+        if self.n_hvg:
+            cmd.extend(["--n-hvg", str(self.n_hvg)])
+
+        # Add any additional kwargs
+        for k, v in kwargs.items():
+            if v is not None:
+                cmd.extend([f"--{k.replace('_', '-')}", str(v)])
+
+        return cmd
 
 
 # Register the model class

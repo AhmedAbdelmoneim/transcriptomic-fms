@@ -1,0 +1,59 @@
+Bootstrap: docker
+From: python:3.11-slim
+
+%files
+    # Files are copied from build context (project root)
+    # This file should be built from the project root directory
+    # Build with: apptainer build transcriptomic-fms-scgpt.sif transcriptomic_fms/models/containers/scgpt/Singularity.def
+    pyproject.toml /transcriptomic-fms/
+    README.md /transcriptomic-fms/
+    transcriptomic_fms /transcriptomic-fms/transcriptomic_fms
+
+%post
+    # Update package lists and install system dependencies
+    apt-get update && apt-get install -y \
+        build-essential \
+        git \
+        curl \
+        ca-certificates \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Install uv
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="/root/.local/bin:$PATH"
+
+    # Set working directory
+    cd /transcriptomic-fms
+
+    # Install PyTorch with CUDA support first (before other dependencies)
+    echo "Installing PyTorch with CUDA support..."
+    /root/.local/bin/uv pip install --system --index-url https://download.pytorch.org/whl/cu121 \
+        "torch>=2.0.0,<2.3.0" || echo "Warning: PyTorch installation failed."
+
+    # Install the package with scGPT optional dependencies
+    echo "Installing package with scGPT dependencies..."
+    /root/.local/bin/uv pip install --system -e ".[scgpt]"
+
+    # Ensure torch is still the CUDA version
+    /root/.local/bin/uv pip install --system --index-url https://download.pytorch.org/whl/cu121 \
+        --upgrade-package torch "torch>=2.0.0,<2.3.0" || true
+
+    # Create data, output, and models directories
+    mkdir -p /transcriptomic-fms/data
+    mkdir -p /transcriptomic-fms/output
+    mkdir -p /transcriptomic-fms/models
+
+%environment
+    export PATH="/root/.local/bin:$PATH"
+    export PYTHONPATH="/transcriptomic-fms:$PYTHONPATH"
+    export PYTHONUNBUFFERED=1
+
+%runscript
+    # Default command
+    exec python -m transcriptomic_fms.cli.main "$@"
+
+%labels
+    Author "Ahmed Sallam"
+    Version "0.1.0"
+    Description "Transcriptomic Foundation Models - scGPT container with CUDA support"
+
