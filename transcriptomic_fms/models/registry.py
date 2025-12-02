@@ -37,10 +37,14 @@ def register_model(
         The model class (for use as decorator)
     """
     # Handle both @register_model and @register_model("name") usage
-    if model_class is None:
-        # Called with name: @register_model("name")
+    # When called as @register_model("name"), the first arg is the name (a string)
+    if model_class is None or isinstance(model_class, str):
+        # Called with name: @register_model("name") or @register_model
+        # If model_class is a string, it's actually the model name
+        actual_name = model_class if isinstance(model_class, str) else model_name
+
         def decorator(cls: type[BaseEmbeddingModel]) -> type[BaseEmbeddingModel]:
-            name = model_name or cls.__name__.lower().replace("model", "").replace(
+            name = actual_name or cls.__name__.lower().replace("model", "").replace(
                 "embedding", ""
             ).strip("_")
             _MODEL_REGISTRY[name] = cls

@@ -11,6 +11,7 @@ from transcriptomic_fms.models.base import BaseEmbeddingModel
 from transcriptomic_fms.models.registry import register_model
 
 
+@register_model("pca")
 class PCAModel(BaseEmbeddingModel):
     """PCA embedding model with optional HVG selection."""
 
@@ -145,8 +146,3 @@ class PCAModel(BaseEmbeddingModel):
                 cmd.extend([f"--{k.replace('_', '-')}", str(v)])
 
         return cmd
-
-
-# Register the model class
-# Note: When instantiating, set use_hvg=True for HVG version
-register_model("pca")(PCAModel)

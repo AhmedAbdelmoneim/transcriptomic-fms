@@ -56,7 +56,7 @@ install-model:
 		exit 1; \
 	fi
 	@echo "Checking dependencies for $(MODEL)..."
-	@DEP_GROUP=$$(uv run python -c "from transcriptomic_fms.models import get_model; m = get_model('$(MODEL)'); print(m.get_optional_dependency_group() or '')" 2>/dev/null); \
+	@DEP_GROUP=$$(uv run python -m transcriptomic_fms.models.get_dep_group $(MODEL) 2>/dev/null); \
 	if [ -z "$$DEP_GROUP" ]; then \
 		echo "Model $(MODEL) has no special dependencies."; \
 	else \

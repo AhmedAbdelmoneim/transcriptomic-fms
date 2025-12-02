@@ -8,7 +8,8 @@ Common interface for generating embeddings from transcriptomic foundation models
 
 ```bash
 # Install base dependencies
-uv sync
+make create_environment
+make requirements
 
 # Install dependencies for specific models
 make install-model MODEL=scgpt
@@ -189,50 +190,6 @@ Override by passing options to `sbatch`:
 ```bash
 sbatch --time=8:00:00 --mem=128G transcriptomic_fms/hpc/run_job.sh embed ...
 ```
-
-### GPU Support
-
-GPU access is automatically detected from SLURM environment variables. The `--gres=gpu:1` flag is included by default in `run_job.sh`.
-
-## Dependency Management
-
-### Installing Model Dependencies
-
-Each model can have optional dependencies defined in `pyproject.toml`:
-
-```bash
-# Install dependencies for a specific model
-make install-model MODEL=scgpt
-
-# This runs: uv sync --extra scgpt
-```
-
-### Model-Specific Containers
-
-For HPC, models can have their own container definitions with model-specific dependencies:
-
-```bash
-# Build model-specific container
-make build-model-container MODEL=scgpt
-
-# This creates: transcriptomic-fms-scgpt.sif
-```
-
-Model containers are located in `transcriptomic_fms/models/containers/{model_name}/Singularity.def`.
-
-## Development
-
-```bash
-# Lint
-make lint
-
-# Format
-make format
-```
-
-## License
-
-[Your License Here]
 
 ## Authors
 
