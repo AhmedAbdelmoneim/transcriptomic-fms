@@ -45,8 +45,9 @@ scgpt = [
 transcriptomic-fms = "transcriptomic_fms.cli.main:main"
 
 
+
 [tool.uv.extra-build-dependencies]
-flash-attn = ["torch"]
+flash-attn = ["torch", "numpy"]
 
 [tool.ruff]
 line-length = 99

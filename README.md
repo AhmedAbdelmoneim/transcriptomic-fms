@@ -15,6 +15,10 @@ make requirements
 make install-model MODEL=scgpt
 # or
 uv sync --extra scgpt
+
+# On HPC clusters (Compute Canada), load CUDA module before installing scgpt:
+# module load cuda/11.7  # or appropriate CUDA version
+# make install-model MODEL=scgpt
 ```
 
 ### List Available Models

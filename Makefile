@@ -41,7 +41,7 @@ embed:
 ## List available models
 .PHONY: list-models
 list-models:
-	uv run python -m transcriptomic_fms.cli.main list
+	@python -m transcriptomic_fms.cli.main list
 
 ## Install dependencies for a specific model
 ## Usage: make install-model MODEL=<model_name>
@@ -60,6 +60,14 @@ install-model:
 	if [ -z "$$DEP_GROUP" ]; then \
 		echo "Model $(MODEL) has no special dependencies."; \
 	else \
+		if [ "$$DEP_GROUP" = "scgpt" ]; then \
+			echo ""; \
+			echo "Note: Installing scgpt dependencies (includes flash-attn which requires CUDA/nvcc)."; \
+			echo "On HPC clusters, ensure CUDA module is loaded:"; \
+			echo "  module load cuda/11.7  # or appropriate CUDA version"; \
+			echo "  module avail cuda     # to see available versions"; \
+			echo ""; \
+		fi; \
 		echo "Installing dependencies for $(MODEL) (group: $$DEP_GROUP)..."; \
 		uv sync --extra $$DEP_GROUP; \
 	fi
