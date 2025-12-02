@@ -203,18 +203,42 @@ def list_command(args: argparse.Namespace) -> None:
         logger.info("No models registered.")
         return
 
+    # Check pyproject.toml for optional dependencies (without requiring them to be installed)
+    optional_deps = {}
+    try:
+        from pathlib import Path
+        import tomllib
+
+        project_root = Path(__file__).parent.parent.parent
+        pyproject_path = project_root / "pyproject.toml"
+        if pyproject_path.exists():
+            with open(pyproject_path, "rb") as f:
+                config = tomllib.load(f)
+            optional_deps = config.get("project", {}).get("optional-dependencies", {})
+    except Exception:
+        pass
+
     logger.info("Available models:")
     for model_name in models:
-        try:
-            # Try to get model instance to check dependencies
-            model = get_model(model_name)
-            deps = model.get_optional_dependency_group()
-            if deps:
-                logger.info(f"  - {model_name} (requires: {deps})")
-            else:
-                logger.info(f"  - {model_name}")
-        except Exception as e:
-            logger.warning(f"  - {model_name} (error loading: {e})")
+        # Check if model has optional dependencies from pyproject.toml
+        # This doesn't require the dependencies to be installed
+        if model_name in optional_deps:
+            logger.info(f"  - {model_name} (requires optional dependencies: {model_name})")
+        else:
+            # Try to get from model instance if available (but don't fail if not)
+            try:
+                model = get_model(model_name)
+                deps = model.get_optional_dependency_group()
+                if deps:
+                    logger.info(f"  - {model_name} (requires: {deps})")
+                else:
+                    logger.info(f"  - {model_name}")
+            except Exception:
+                # Model can't be instantiated (missing deps), but we know it exists
+                if model_name in optional_deps:
+                    logger.info(f"  - {model_name} (requires optional dependencies: {model_name})")
+                else:
+                    logger.info(f"  - {model_name}")
 
 
 def install_model_command(args: argparse.Namespace) -> None:
