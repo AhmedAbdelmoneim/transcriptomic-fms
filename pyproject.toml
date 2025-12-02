@@ -37,6 +37,8 @@ scgpt = [
     "torch<=2.2.2",
     "numpy<2",
     "gdown",
+    "pyarrow<14.0",
+    "flash-attn<1.0.5; platform_machine != 'aarch64'",
 ]
 
 [project.scripts]
