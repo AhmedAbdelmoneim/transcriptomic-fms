@@ -1,0 +1,47 @@
+Bootstrap: docker
+From: python:3.11-slim
+
+%files
+    pyproject.toml /transcriptomic-fms/
+    README.md /transcriptomic-fms/
+    transcriptomic_fms /transcriptomic-fms/transcriptomic_fms
+
+%post
+    # Update package lists and install system dependencies
+    apt-get update && apt-get install -y \
+        build-essential \
+        git \
+        curl \
+        ca-certificates \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Install uv
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="/root/.local/bin:$PATH"
+
+    # Set working directory
+    cd /transcriptomic-fms
+
+    # Install the package and all dependencies from pyproject.toml (in editable mode)
+    echo "Installing package and dependencies from pyproject.toml..."
+    /root/.local/bin/uv pip install --system -e .
+
+    # Create data and output directories
+    mkdir -p /transcriptomic-fms/data
+    mkdir -p /transcriptomic-fms/output
+    mkdir -p /transcriptomic-fms/models
+
+%environment
+    export PATH="/root/.local/bin:$PATH"
+    export PYTHONPATH="/transcriptomic-fms:$PYTHONPATH"
+    export PYTHONUNBUFFERED=1
+
+%runscript
+    # Default command
+    exec python -m transcriptomic_fms.cli.main "$@"
+
+%labels
+    Author "Ahmed Sallam"
+    Version "0.1.0"
+    Description "Transcriptomic Foundation Models - Embedding generation infrastructure"
+

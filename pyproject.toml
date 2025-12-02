@@ -25,9 +25,13 @@ dependencies = [
     "pip",
     "python-dotenv",
     "ruff",
+    "scanpy",
     "scikit-learn",
 ]
 requires-python = "~=3.11.0"
+
+[project.scripts]
+transcriptomic-fms = "transcriptomic_fms.cli.main:main"
 
 
 [tool.ruff]
