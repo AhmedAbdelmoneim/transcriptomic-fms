@@ -1,5 +1,5 @@
 Bootstrap: docker
-From: python:3.11-slim
+From: nvidia/cuda:12.1.0-devel-ubuntu22.04
 
 %files
     pyproject.toml /transcriptomic-fms/
@@ -7,13 +7,35 @@ From: python:3.11-slim
     transcriptomic_fms /transcriptomic-fms/transcriptomic_fms
 
 %post
+    # Suppress debconf and update-alternatives warnings
+    export DEBIAN_FRONTEND=noninteractive
+    export UCF_FORCE_CONFFNEW=1
+    
     # Update package lists and install system dependencies
-    apt-get update && apt-get install -y \
+    # Base image already has CUDA toolkit (nvcc) installed
+    apt-get update -qq
+    apt-get install -y -qq --no-install-recommends \
         build-essential \
         git \
         curl \
         ca-certificates \
-        && rm -rf /var/lib/apt/lists/*
+        python3.11 \
+        python3.11-dev \
+        python3-pip \
+        python3-venv
+    
+    # Verify nvcc is available (should be in base CUDA image)
+    if ! command -v nvcc &> /dev/null; then
+        echo "ERROR: nvcc not found in CUDA base image!"
+        exit 1
+    fi
+    
+    # Create symlink for python (base image may use python3)
+    ln -sf /usr/bin/python3.11 /usr/bin/python || true
+    ln -sf /usr/bin/python3.11 /usr/bin/python3 || true
+    
+    # Clean up apt lists to reduce image size
+    rm -rf /var/lib/apt/lists/*
 
     # Install uv
     curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -25,14 +47,22 @@ From: python:3.11-slim
     # Install PyTorch with CUDA support first (before other dependencies)
     # This is needed for flash-attn and GPU-enabled models
     echo "Installing PyTorch with CUDA support..."
-    /root/.local/bin/uv pip install --system --index-url https://download.pytorch.org/whl/cu121 \
-        "torch>=2.0.0,<2.3.0" || echo "Warning: PyTorch installation failed."
+    if ! /root/.local/bin/uv pip install --system --index-url https://download.pytorch.org/whl/cu121 \
+        "torch>=2.0.0,<2.3.0"; then
+        echo "Warning: PyTorch installation failed."
+    fi
 
-    # Install flash-attn (optional but recommended for performance)
-    # This takes a long time to compile but is reusable across model containers
-    echo "Installing flash-attn (this may take 30-60 minutes)..."
-    /root/.local/bin/uv pip install --system "flash-attn<1.0.5" || \
-        echo "Warning: flash-attn installation failed. Models will work but may be slower."
+    # Install flash-attn (REQUIRED - CUDA toolkit already installed above)
+    echo "Installing flash-attn (this will take 30-60 minutes)..."
+    
+    NVCC_VERSION=$(nvcc --version 2>/dev/null | grep "release" | sed -n 's/.*release \([0-9.]*\).*/\1/p' | head -1 || echo "unknown")
+    echo "nvcc found (CUDA $NVCC_VERSION)"
+    
+    if ! /root/.local/bin/uv pip install --system "flash-attn<1.0.5"; then
+        echo "ERROR: flash-attn installation failed!"
+        exit 1
+    fi
+    echo "flash-attn installed successfully"
 
     # Install the package and all dependencies from pyproject.toml (in editable mode)
     echo "Installing package and dependencies from pyproject.toml..."
@@ -48,7 +78,8 @@ From: python:3.11-slim
     mkdir -p /transcriptomic-fms/models
 
 %environment
-    export PATH="/root/.local/bin:$PATH"
+    export PATH="/root/.local/bin:/usr/local/cuda/bin:$PATH"
+    export LD_LIBRARY_PATH="/usr/local/cuda/lib64:$LD_LIBRARY_PATH"
     export PYTHONPATH="/transcriptomic-fms:$PYTHONPATH"
     export PYTHONUNBUFFERED=1
 

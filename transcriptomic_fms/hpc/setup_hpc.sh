@@ -17,6 +17,13 @@ fi
 
 echo "Apptainer version: $(apptainer --version)"
 
+echo ""
+echo "Building container with flash-attn support..."
+echo "Note: CUDA toolkit will be installed in the container for compilation."
+echo "      flash-attn will be compiled during build (takes 30-60 minutes)."
+echo "      The physical GPU is NOT needed for compilation."
+echo ""
+
 # Set project root (two levels up from hpc directory: hpc -> transcriptomic_fms -> project root)
 HPC_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PROJ_ROOT=$(cd "$HPC_DIR/../.." && pwd)
@@ -94,7 +101,6 @@ fi
 APPTAINER_CMD="apptainer exec"
 
 # Add GPU support if requested
-# Check multiple conditions for GPU availability
 GPU_REQUESTED=0
 if [ "${APPTAINER_USE_GPU:-0}" = "1" ]; then
     GPU_REQUESTED=1
@@ -133,6 +139,19 @@ echo ""
 echo "========================================="
 echo "Setup complete!"
 echo "========================================="
+echo ""
+echo "Container built: $APPTAINER_IMAGE"
+
+# Verify flash-attn was installed
+if apptainer exec "$APPTAINER_IMAGE" python -c "import flash_attn" 2>/dev/null; then
+    FLASH_VERSION=$(apptainer exec "$APPTAINER_IMAGE" python -c "import flash_attn; print(flash_attn.__version__)" 2>/dev/null || echo "unknown")
+    echo "✓ flash-attn installed (version: $FLASH_VERSION)"
+else
+    echo "ERROR: flash-attn was not installed in the container!"
+    echo "Build should have failed if nvcc was not available."
+    exit 1
+fi
+
 echo ""
 echo "To run commands in the Apptainer container:"
 echo "  ./run_apptainer.sh python -m transcriptomic_fms.cli.main embed --model pca --input data/test.h5ad --output output/embeddings.npy"
