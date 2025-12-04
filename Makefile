@@ -114,6 +114,33 @@ build-model-container:
 	apptainer build "$$CONTAINER_NAME" "$$CONTAINER_DEF" && \
 	echo "Container built successfully: $$CONTAINER_NAME"
 
+## Run embedding interactively on HPC (requires interactive node via salloc)
+## Usage: make hpc-embed-interactive MODEL=<model_name> INPUT=<path/to/input.h5ad> OUTPUT=<path/to/output.npy> [MODEL_ARGS="--arg1 value1 --arg2"]
+## Note: Run this after getting an interactive node with: salloc --gres=gpu:1 ...
+.PHONY: hpc-embed-interactive
+hpc-embed-interactive:
+	@if [ -z "$(MODEL)" ] || [ -z "$(INPUT)" ] || [ -z "$(OUTPUT)" ]; then \
+		echo "Usage: make hpc-embed-interactive MODEL=<model_name> INPUT=<path/to/input.h5ad> OUTPUT=<path/to/output.npy> [MODEL_ARGS=\"--arg1 value1 --arg2\"]"; \
+		echo ""; \
+		echo "Example:"; \
+		echo "  # First, get an interactive GPU node:"; \
+		echo "  salloc --time=4:00:00 --nodes=1 --cpus-per-task=8 --mem=64G --account=def-jagillis --gres=gpu:1"; \
+		echo ""; \
+		echo "  # Then run:"; \
+		echo "  make hpc-embed-interactive MODEL=scgpt INPUT=data/test.h5ad OUTPUT=output/embeddings.npy MODEL_ARGS=\"--device cuda\""; \
+		exit 1; \
+	fi
+	@if [ ! -f "run_apptainer.sh" ]; then \
+		echo "Error: run_apptainer.sh not found. Run 'make setup-hpc' first."; \
+		exit 1; \
+	fi
+	@export APPTAINER_USE_GPU=1; \
+	./run_apptainer.sh python -m transcriptomic_fms.cli.main embed \
+		--model $(MODEL) \
+		--input $(INPUT) \
+		--output $(OUTPUT) \
+		$(MODEL_ARGS)
+
 ## Run embedding job on HPC (requires SLURM)
 ## Usage: make hpc-embed MODEL=<model_name> INPUT=<path/to/input.h5ad> OUTPUT=<path/to/output.npy> [MODEL_ARGS="--arg1 value1 --arg2"]
 .PHONY: hpc-embed

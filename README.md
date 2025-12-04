@@ -45,18 +45,45 @@ make embed MODEL=pca INPUT=data/test.h5ad OUTPUT=output/embeddings.npy \
 make setup-hpc
 ```
 
-2. **Submit a job**:
+2. **Build model-specific container** (for scgpt, etc.):
+```bash
+module load apptainer
+make build-model-container MODEL=scgpt
+```
+
+3. **Run interactively** (for testing/debugging):
+```bash
+# First, get an interactive GPU node
+salloc --time=4:00:00 --nodes=1 --cpus-per-task=8 --mem=64G \
+    --account=def-jagillis --gres=gpu:1
+
+# Once you have the node, run:
+make hpc-embed-interactive MODEL=scgpt \
+    INPUT=data/test.h5ad \
+    OUTPUT=output/embeddings.npy \
+    MODEL_ARGS="--device cuda"
+
+# Or manually:
+export APPTAINER_USE_GPU=1
+./run_apptainer.sh python -m transcriptomic_fms.cli.main embed \
+    --model scgpt \
+    --input data/test.h5ad \
+    --output output/embeddings.npy \
+    --device cuda
+```
+
+4. **Submit a batch job** (for production):
 ```bash
 # Using Makefile
-make hpc-embed MODEL=pca INPUT=data/test.h5ad OUTPUT=output/embeddings.npy \
-    MODEL_ARGS="--n-components 100"
+make hpc-embed MODEL=scgpt INPUT=data/test.h5ad OUTPUT=output/embeddings.npy \
+    MODEL_ARGS="--device cuda"
 
 # Or directly with sbatch
 sbatch transcriptomic_fms/hpc/run_job.sh embed \
-    --model pca \
+    --model scgpt \
     --input data/test.h5ad \
     --output output/embeddings.npy \
-    --n-components 100
+    --device cuda
 ```
 
 ## Architecture
