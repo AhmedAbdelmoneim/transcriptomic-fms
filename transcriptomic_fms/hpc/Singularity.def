@@ -11,6 +11,10 @@ From: nvidia/cuda:12.1.0-devel-ubuntu22.04
     export DEBIAN_FRONTEND=noninteractive
     export UCF_FORCE_CONFFNEW=1
     
+    # Set CUDA paths (base image has CUDA installed at /usr/local/cuda)
+    export PATH="/usr/local/cuda/bin:$PATH"
+    export LD_LIBRARY_PATH="/usr/local/cuda/lib64:$LD_LIBRARY_PATH"
+    
     # Update package lists and install system dependencies
     # Base image already has CUDA toolkit (nvcc) installed
     apt-get update -qq
@@ -25,9 +29,15 @@ From: nvidia/cuda:12.1.0-devel-ubuntu22.04
         python3-venv
     
     # Verify nvcc is available (should be in base CUDA image)
-    if ! command -v nvcc &> /dev/null; then
+    if ! command -v nvcc &> /dev/null && [ ! -f /usr/local/cuda/bin/nvcc ]; then
         echo "ERROR: nvcc not found in CUDA base image!"
+        echo "Checked: command -v nvcc and /usr/local/cuda/bin/nvcc"
         exit 1
+    fi
+    
+    # Ensure nvcc is in PATH (may not be in default PATH during build)
+    if [ -f /usr/local/cuda/bin/nvcc ] && ! command -v nvcc &> /dev/null; then
+        export PATH="/usr/local/cuda/bin:$PATH"
     fi
     
     # Create symlink for python (base image may use python3)
@@ -39,7 +49,7 @@ From: nvidia/cuda:12.1.0-devel-ubuntu22.04
 
     # Install uv
     curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="/root/.local/bin:$PATH"
+    export PATH="/root/.local/bin:/usr/local/cuda/bin:$PATH"
 
     # Set working directory
     cd /transcriptomic-fms
