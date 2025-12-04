@@ -106,9 +106,20 @@ build-model-container:
 	@echo "Building container for model $(MODEL)..."; \
 	CONTAINER_NAME="transcriptomic-fms-$(MODEL).sif"; \
 	CONTAINER_DEF="transcriptomic_fms/models/containers/$(MODEL)/Singularity.def"; \
+	BASE_CONTAINER="transcriptomic-fms.sif"; \
 	if [ ! -f "$$CONTAINER_DEF" ]; then \
 		echo "Error: Container definition not found: $$CONTAINER_DEF"; \
 		exit 1; \
+	fi; \
+	# Check if model container extends base container and verify base exists \
+	if grep -q "Bootstrap: localimage" "$$CONTAINER_DEF" 2>/dev/null; then \
+		if [ ! -f "$$BASE_CONTAINER" ]; then \
+			echo "Error: Base container ($$BASE_CONTAINER) not found."; \
+			echo "Model container extends base container. Please build base container first:"; \
+			echo "  make setup-hpc"; \
+			exit 1; \
+		fi; \
+		echo "Model container extends base container: $$BASE_CONTAINER"; \
 	fi; \
 	if [ -f "$$CONTAINER_NAME" ]; then \
 		echo "Warning: $$CONTAINER_NAME already exists. Removing it..."; \

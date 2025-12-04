@@ -19,15 +19,23 @@ models/containers/
 
 The base container in `transcriptomic_fms/hpc/Singularity.def` includes:
 - Core dependencies (scanpy, numpy, pandas, etc.)
+- PyTorch with CUDA support
+- flash-attn (compiled, takes 30-60 minutes but reusable)
 - Base package installation
+
+**Note:** The base container includes GPU dependencies so they only need to be compiled once. Model-specific containers extend this base to avoid recompiling flash-attn.
 
 ## Model-Specific Containers
 
-Model-specific containers can:
-- Extend the base container
-- Add model-specific dependencies (e.g., scGPT, torch with specific CUDA version)
+Model-specific containers:
+- **Extend the base container** using `Bootstrap: localimage` (avoids recompiling flash-attn)
+- Add model-specific dependencies (e.g., scGPT)
 - Include model checkpoints
 - Customize environment variables
+
+**Building order:**
+1. First build the base container: `make setup-hpc` (includes flash-attn compilation)
+2. Then build model containers: `make build-model-container MODEL=scgpt` (fast, extends base)
 
 ## Building Model Containers
 

@@ -22,9 +22,25 @@ From: python:3.11-slim
     # Set working directory
     cd /transcriptomic-fms
 
+    # Install PyTorch with CUDA support first (before other dependencies)
+    # This is needed for flash-attn and GPU-enabled models
+    echo "Installing PyTorch with CUDA support..."
+    /root/.local/bin/uv pip install --system --index-url https://download.pytorch.org/whl/cu121 \
+        "torch>=2.0.0,<2.3.0" || echo "Warning: PyTorch installation failed."
+
+    # Install flash-attn (optional but recommended for performance)
+    # This takes a long time to compile but is reusable across model containers
+    echo "Installing flash-attn (this may take 30-60 minutes)..."
+    /root/.local/bin/uv pip install --system "flash-attn<1.0.5" || \
+        echo "Warning: flash-attn installation failed. Models will work but may be slower."
+
     # Install the package and all dependencies from pyproject.toml (in editable mode)
     echo "Installing package and dependencies from pyproject.toml..."
     /root/.local/bin/uv pip install --system -e .
+
+    # Ensure torch is still the CUDA version
+    /root/.local/bin/uv pip install --system --index-url https://download.pytorch.org/whl/cu121 \
+        --upgrade-package torch "torch>=2.0.0,<2.3.0" || true
 
     # Create data and output directories
     mkdir -p /transcriptomic-fms/data
