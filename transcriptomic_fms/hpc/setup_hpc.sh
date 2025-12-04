@@ -17,9 +17,9 @@ fi
 
 echo "Apptainer version: $(apptainer --version)"
 
-# Set project root (parent of hpc directory)
+# Set project root (two levels up from hpc directory: hpc -> transcriptomic_fms -> project root)
 HPC_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-PROJ_ROOT=$(cd "$HPC_DIR/.." && pwd)
+PROJ_ROOT=$(cd "$HPC_DIR/../.." && pwd)
 cd "$PROJ_ROOT"
 
 # Verify required files exist
