@@ -22,16 +22,42 @@ HPC_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PROJ_ROOT=$(cd "$HPC_DIR/.." && pwd)
 cd "$PROJ_ROOT"
 
+# Verify required files exist
+echo "Verifying required files..."
+if [ ! -f "pyproject.toml" ]; then
+    echo "Error: pyproject.toml not found in project root: $PROJ_ROOT"
+    exit 1
+fi
+if [ ! -f "README.md" ]; then
+    echo "Error: README.md not found in project root: $PROJ_ROOT"
+    exit 1
+fi
+if [ ! -d "transcriptomic_fms" ]; then
+    echo "Error: transcriptomic_fms directory not found in project root: $PROJ_ROOT"
+    exit 1
+fi
+echo "All required files found."
+
 # Build Apptainer image
 echo ""
 echo "Building Apptainer image..."
+echo "Current directory: $(pwd)"
+echo "Project root: $PROJ_ROOT"
 APPTAINER_IMAGE="$PROJ_ROOT/transcriptomic-fms.sif"
 if [ -f "$APPTAINER_IMAGE" ]; then
     echo "Warning: $APPTAINER_IMAGE already exists. Removing it..."
     rm -f "$APPTAINER_IMAGE"
 fi
 
-apptainer build "$APPTAINER_IMAGE" "$HPC_DIR/Singularity.def"
+# Build from project root - paths in Singularity.def are relative to build context
+# Use relative path to Singularity.def from project root
+SINGULARITY_DEF="transcriptomic_fms/hpc/Singularity.def"
+if [ ! -f "$SINGULARITY_DEF" ]; then
+    echo "Error: Singularity.def not found at $SINGULARITY_DEF"
+    exit 1
+fi
+
+apptainer build "$APPTAINER_IMAGE" "$SINGULARITY_DEF"
 
 echo ""
 echo "Apptainer image built successfully: $APPTAINER_IMAGE"
