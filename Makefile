@@ -103,14 +103,20 @@ build-model-container:
 		echo "  module load apptainer"; \
 		exit 1; \
 	fi
-	@echo "Building container for model $(MODEL)..."
-	@CONTAINER_NAME="transcriptomic-fms-$(MODEL).sif"; \
+	@echo "Building container for model $(MODEL)..."; \
+	CONTAINER_NAME="transcriptomic-fms-$(MODEL).sif"; \
 	CONTAINER_DEF="transcriptomic_fms/models/containers/$(MODEL)/Singularity.def"; \
+	if [ ! -f "$$CONTAINER_DEF" ]; then \
+		echo "Error: Container definition not found: $$CONTAINER_DEF"; \
+		exit 1; \
+	fi; \
 	if [ -f "$$CONTAINER_NAME" ]; then \
 		echo "Warning: $$CONTAINER_NAME already exists. Removing it..."; \
 		rm -f "$$CONTAINER_NAME"; \
 	fi; \
-	# Build from project root so file paths in Singularity.def resolve correctly
+	echo "Building from project root (file paths in Singularity.def are relative to build context)"; \
+	echo "Container definition: $$CONTAINER_DEF"; \
+	echo "Output container: $$CONTAINER_NAME"; \
 	apptainer build "$$CONTAINER_NAME" "$$CONTAINER_DEF" && \
 	echo "Container built successfully: $$CONTAINER_NAME"
 
