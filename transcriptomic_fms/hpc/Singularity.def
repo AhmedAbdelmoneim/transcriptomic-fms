@@ -139,10 +139,24 @@ PYEOF
     # Rebuild h5py from source to ensure it links against the installed HDF5 version
     # h5py wheels may be built against a different HDF5 version than what's in the container
     echo "Rebuilding h5py from source to match system HDF5 libraries..."
+    # Set HDF5 environment variables for the build
+    export HDF5_DIR=/usr
+    export HDF5_VERSION=1.10.3
     /root/.local/bin/uv pip install --system \
         --preview-features extra-build-dependencies \
         --force-reinstall --no-binary h5py h5py || {
-        echo "Warning: h5py rebuild failed, but continuing. HDF5 compatibility may be an issue."
+        echo "ERROR: h5py rebuild failed! This is required for HDF5 compatibility."
+        echo "Checking HDF5 installation..."
+        ldconfig -p | grep hdf5 || echo "No HDF5 libraries found in cache"
+        find /usr/lib -name "*libhdf5*" 2>/dev/null | head -5 || echo "No HDF5 libraries found"
+        exit 1
+    }
+    
+    # Verify h5py can import
+    echo "Verifying h5py installation..."
+    python -c "import h5py; print(f'h5py version: {h5py.__version__}')" || {
+        echo "ERROR: h5py import failed after rebuild!"
+        exit 1
     }
 
     # Verify torch is still the CUDA version

@@ -28,6 +28,15 @@ From: transcriptomic-fms.sif
         --preview-features extra-build-dependencies \
         "scgpt" "gdown" "pyarrow<14.0"
 
+    # Rebuild h5py from source to ensure it links against system HDF5 libraries
+    # This is needed because scgpt dependencies might reinstall h5py from a wheel
+    echo "Rebuilding h5py to match system HDF5 libraries..."
+    /root/.local/bin/uv pip install --system \
+        --preview-features extra-build-dependencies \
+        --force-reinstall --no-binary h5py h5py || {
+        echo "Warning: h5py rebuild failed, but continuing."
+    }
+
     # Ensure torch is still the CUDA version (should already be, but verify)
     /root/.local/bin/uv pip install --system --index-url https://download.pytorch.org/whl/cu121 \
         --upgrade-package torch "torch>=2.0.0,<2.3.0" || true
