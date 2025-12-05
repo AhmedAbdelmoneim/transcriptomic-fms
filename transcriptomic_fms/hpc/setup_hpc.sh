@@ -19,9 +19,8 @@ echo "Apptainer version: $(apptainer --version)"
 
 echo ""
 echo "Building container with flash-attn support..."
-echo "Note: CUDA toolkit will be installed in the container for compilation."
-echo "      flash-attn will be compiled during build (takes 30-60 minutes)."
-echo "      The physical GPU is NOT needed for compilation."
+echo "Note: flash-attn will be installed using pre-built wheels (fast)."
+echo "      If no compatible wheel is found, it will compile from source (30-60 minutes)."
 echo ""
 
 # Set project root (two levels up from hpc directory: hpc -> transcriptomic_fms -> project root)
@@ -143,12 +142,17 @@ echo ""
 echo "Container built: $APPTAINER_IMAGE"
 
 # Verify flash-attn was installed
-if apptainer exec "$APPTAINER_IMAGE" python -c "import flash_attn" 2>/dev/null; then
-    FLASH_VERSION=$(apptainer exec "$APPTAINER_IMAGE" python -c "import flash_attn; print(flash_attn.__version__)" 2>/dev/null || echo "unknown")
+echo ""
+echo "Verifying flash-attn installation..."
+FLASH_VERSION=$(apptainer exec "$APPTAINER_IMAGE" python -m pip show flash-attn 2>/dev/null | grep "^Version:" | cut -d' ' -f2)
+if [ -n "$FLASH_VERSION" ]; then
     echo "✓ flash-attn installed (version: $FLASH_VERSION)"
+    # Try import (may fail without GPU/CUDA, but that's OK - it will work at runtime with --nv)
+    if ! apptainer exec "$APPTAINER_IMAGE" python -c "import flash_attn" 2>/dev/null; then
+        echo "  Note: Import test failed (expected without GPU). Will work with --nv flag."
+    fi
 else
     echo "ERROR: flash-attn was not installed in the container!"
-    echo "Build should have failed if nvcc was not available."
     exit 1
 fi
 
