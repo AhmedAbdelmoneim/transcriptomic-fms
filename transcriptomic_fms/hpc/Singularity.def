@@ -131,11 +131,19 @@ PYEOF
     echo "flash-attn installed successfully"
 
     # Install the package and all dependencies from pyproject.toml (in editable mode)
-    # HDF5 libraries are already installed above, so h5py will link correctly
     echo "Installing package and dependencies from pyproject.toml..."
     /root/.local/bin/uv pip install --system \
         --preview-features extra-build-dependencies \
         -e .
+    
+    # Rebuild h5py from source to ensure it links against the installed HDF5 version
+    # h5py wheels may be built against a different HDF5 version than what's in the container
+    echo "Rebuilding h5py from source to match system HDF5 libraries..."
+    /root/.local/bin/uv pip install --system \
+        --preview-features extra-build-dependencies \
+        --force-reinstall --no-binary h5py h5py || {
+        echo "Warning: h5py rebuild failed, but continuing. HDF5 compatibility may be an issue."
+    }
 
     # Verify torch is still the CUDA version
     /root/.local/bin/uv pip install --system \
