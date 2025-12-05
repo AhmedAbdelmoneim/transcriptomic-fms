@@ -133,6 +133,32 @@ python -m transcriptomic_fms.cli.main embed \
 python -m transcriptomic_fms.cli.main list
 ```
 
+## Testing
+
+Run functional tests to verify models work correctly:
+
+```bash
+# Install test dependencies
+make install-test
+
+# Run all tests locally
+make test
+
+# Test specific model
+make test MODEL=pca
+
+# Run HPC/container tests (requires container built)
+make test-hpc MODEL=scgpt
+```
+
+Tests automatically:
+- Create synthetic test data
+- Run preprocessing and embedding
+- Validate output (shape, no NaN/Inf, etc.)
+- Test decoding if supported
+
+See [tests/README.md](tests/README.md) for details.
+
 ## Available Models
 
 ### PCA
