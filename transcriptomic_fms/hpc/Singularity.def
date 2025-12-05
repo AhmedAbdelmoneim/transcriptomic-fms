@@ -131,6 +131,7 @@ PYEOF
     echo "flash-attn installed successfully"
 
     # Install the package and all dependencies from pyproject.toml (in editable mode)
+    # HDF5 libraries are already installed above, so h5py will link correctly
     echo "Installing package and dependencies from pyproject.toml..."
     /root/.local/bin/uv pip install --system \
         --preview-features extra-build-dependencies \
@@ -149,9 +150,10 @@ PYEOF
 
 %environment
     export PATH="/root/.local/bin:/usr/local/cuda/bin:$PATH"
-    export LD_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
+    export LD_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:/usr/lib:$LD_LIBRARY_PATH"
     export PYTHONPATH="/transcriptomic-fms:$PYTHONPATH"
     export PYTHONUNBUFFERED=1
+    export HDF5_DIR=/usr
 
 %runscript
     # Default command

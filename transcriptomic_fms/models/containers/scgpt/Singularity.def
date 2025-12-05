@@ -33,9 +33,12 @@ From: transcriptomic-fms.sif
         --upgrade-package torch "torch>=2.0.0,<2.3.0" || true
 
 %environment
-    export PATH="/root/.local/bin:$PATH"
+    # Inherit all environment from base container (CUDA, HDF5, etc.)
+    export PATH="/root/.local/bin:/usr/local/cuda/bin:$PATH"
+    export LD_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:/usr/lib:$LD_LIBRARY_PATH"
     export PYTHONPATH="/transcriptomic-fms:$PYTHONPATH"
     export PYTHONUNBUFFERED=1
+    export HDF5_DIR=/usr
 
 %runscript
     # Default command
