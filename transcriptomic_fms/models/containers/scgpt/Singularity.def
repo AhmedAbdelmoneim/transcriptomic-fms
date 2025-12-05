@@ -15,9 +15,18 @@ From: transcriptomic-fms.sif
     cd /transcriptomic-fms
 
     # Base container already has PyTorch CUDA, flash-attn, and base package
-    # Just install scGPT-specific dependencies
+    # Install scGPT-specific dependencies (skip flash-attn since it's already installed)
     echo "Installing scGPT-specific dependencies..."
-    /root/.local/bin/uv pip install --system -e ".[scgpt]"
+    
+    # Install package in editable mode first (without extras)
+    /root/.local/bin/uv pip install --system \
+        --preview-features extra-build-dependencies \
+        -e . --no-deps
+    
+    # Install scgpt dependencies individually (excluding flash-attn which is already installed)
+    /root/.local/bin/uv pip install --system \
+        --preview-features extra-build-dependencies \
+        "scgpt" "gdown" "pyarrow<14.0"
 
     # Ensure torch is still the CUDA version (should already be, but verify)
     /root/.local/bin/uv pip install --system --index-url https://download.pytorch.org/whl/cu121 \
