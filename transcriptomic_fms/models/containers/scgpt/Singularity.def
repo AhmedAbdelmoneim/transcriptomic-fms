@@ -168,11 +168,19 @@ PYEOF
     # Update library cache
     ldconfig
     
-    # Set HDF5 environment variables for the build
-    export HDF5_DIR=/usr
+    # Set HDF5 environment for h5py build - use ONLY one method (h5py doesn't allow multiple)
+    # Option 1: Use HDF5_DIR prefix (simplest)
+    # h5py will look in /usr/include and /usr/lib for headers/libs
+    # But serial HDF5 is in /usr/include/hdf5/serial, so we need to point there
+    # Option 2: Use HDF5_INCLUDEDIR and HDF5_LIBDIR (without HDF5_DIR)
+    # Option 3: Use pkg-config (if available)
+    
+    # Try using just HDF5_DIR first, pointing to where serial HDF5 is
+    # But h5py expects standard layout, so let's use include/lib dirs instead
+    unset HDF5_DIR || true
     export HDF5_INCLUDEDIR=/usr/include/hdf5/serial
     export HDF5_LIBDIR=/usr/lib/x86_64-linux-gnu
-    export PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH
+    # Don't set PKG_CONFIG_PATH if we're using include/lib dirs
     
     /root/.local/bin/uv pip install --system \
         --preview-features extra-build-dependencies \
