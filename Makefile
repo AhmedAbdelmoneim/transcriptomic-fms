@@ -181,47 +181,6 @@ hpc-embed:
 		$(MODEL_ARGS)
 
 
-
-## Run tests locally
-## Usage: make test [MODEL=<model_name>]
-## Example: make test MODEL=pca
-.PHONY: test
-test:
-	@if [ -z "$(MODEL)" ]; then \
-		echo "Running all model tests..."; \
-		uv run pytest tests/ -v; \
-	else \
-		echo "Running tests for model: $(MODEL)"; \
-		uv run pytest tests/test_$(MODEL).py -v; \
-	fi
-
-## Run tests in HPC/container environment
-## Usage: make test-hpc [MODEL=<model_name>]
-## Example: make test-hpc MODEL=pca
-## Note: Requires container to be built (make setup-hpc)
-.PHONY: test-hpc
-test-hpc:
-	@if [ ! -f "transcriptomic-fms.sif" ] && [ -z "$$APPTAINER_IMAGE" ]; then \
-		echo "Error: Container image not found. Build it first:"; \
-		echo "  make setup-hpc"; \
-		exit 1; \
-	fi
-	@if [ -z "$$APPTAINER_IMAGE" ]; then \
-		export APPTAINER_IMAGE=./transcriptomic-fms.sif; \
-	fi
-	@if [ -z "$(MODEL)" ]; then \
-		echo "Running all HPC model tests..."; \
-		uv run pytest tests/ -v -k "test_model_smoke_hpc"; \
-	else \
-		echo "Running HPC tests for model: $(MODEL)"; \
-		uv run pytest tests/test_$(MODEL).py -v -k "test_model_smoke_hpc"; \
-	fi
-
-## Install test dependencies
-.PHONY: install-test
-install-test:
-	uv sync --extra dev
-
 ## Delete all compiled Python files
 .PHONY: clean
 clean:

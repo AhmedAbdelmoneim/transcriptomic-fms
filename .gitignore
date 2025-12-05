@@ -34,13 +34,10 @@ env/
 *.swo
 *~
 
-# Testing
+# Testing (kept for potential future use)
 .pytest_cache/
 .coverage
 htmlcov/
-tests/tmp/
-tests/data/*.h5ad
-tests/data/*.npy
 
 # HPC/Containers
 *.sif
