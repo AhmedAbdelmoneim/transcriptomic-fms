@@ -25,7 +25,14 @@ From: nvidia/cuda:12.1.0-devel-ubuntu22.04
         python3.11 \
         python3.11-dev \
         python3-pip \
-        python3-venv
+        python3-venv \
+        libhdf5-dev \
+        libhdf5-103 \
+        libpng-dev \
+        libfreetype6-dev \
+        libblas-dev \
+        liblapack-dev \
+        pkg-config
     
     # Create symlink for python
     ln -sf /usr/bin/python3.11 /usr/bin/python || true
