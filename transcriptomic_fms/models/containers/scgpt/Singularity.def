@@ -85,22 +85,32 @@ From: nvidia/cuda:12.1.0-devel-ubuntu22.04
     }
     echo "PyTorch installed successfully"
 
-    # Install scGPT with flash-attn (official method from https://github.com/bowang-lab/scGPT)
-    # pip/uv will automatically use pre-built wheels if available, otherwise compile
-    echo "Installing scGPT with flash-attn and dependencies..."
+    # CRITICAL: Install numpy<2 FIRST and lock it in
+    echo "Installing numpy<2 (must be first)..."
     /root/.local/bin/uv pip install --system \
         --preview-features extra-build-dependencies \
-        "scgpt" "flash-attn<1.0.5" \
-        "gdown" "wandb" "python-louvain" "umap-learn<0.5.7" "pyarrow<14.0" \
         "numpy<2"
     
-    # Install the package and dependencies from pyproject.toml (in editable mode)
-    # Install with numpy<2 constraint to prevent upgrade during base package install
-    echo "Installing package and dependencies from pyproject.toml..."
+    # Verify numpy version
+    python -c "import numpy; assert int(numpy.__version__.split('.')[0]) < 2, f'ERROR: numpy {numpy.__version__} is >= 2.0'; print(f'numpy {numpy.__version__} installed')" || exit 1
+    
+    # Now install everything else - pip will find numpy<2 compatible wheels
+    echo "Installing scGPT and all dependencies..."
     /root/.local/bin/uv pip install --system \
         --preview-features extra-build-dependencies \
-        "numpy<2" \
+        "scgpt" "torch<=2.2.2" "umap-learn<0.5.7" \
+        "wandb" "python-louvain" "gdown" \
+        "flash-attn<1.0.5" \
+        "ipython" "jupyterlab" "matplotlib" "notebook" "pandas" "python-dotenv" "ruff" "scanpy" "scikit-learn" \
         -e .
+    
+    # Final check: ensure numpy<2 is still there
+    python -c "import numpy; assert int(numpy.__version__.split('.')[0]) < 2, f'ERROR: numpy upgraded to {numpy.__version__}'; print(f'✓ numpy {numpy.__version__} confirmed')" || {
+        echo "ERROR: numpy was upgraded to 2.x - forcing downgrade..."
+        /root/.local/bin/uv pip install --system \
+            --preview-features extra-build-dependencies \
+            "numpy<2"
+    }
     
     # Rebuild h5py from source to ensure it links against the installed HDF5 version
     # h5py wheels may be built against a different HDF5 version than what's in the container
