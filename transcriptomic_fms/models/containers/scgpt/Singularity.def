@@ -44,7 +44,11 @@ From: nvidia/cuda:12.1.0-devel-ubuntu22.04
         libfreetype6-dev \
         libblas-dev \
         liblapack-dev \
-        pkg-config
+        pkg-config \
+        openssl
+    
+    # Update CA certificates for gdown
+    update-ca-certificates || true
     
     # Create symlink for python
     ln -sf /usr/bin/python3.11 /usr/bin/python || true
@@ -94,22 +98,77 @@ From: nvidia/cuda:12.1.0-devel-ubuntu22.04
     # Verify numpy version
     python -c "import numpy; assert int(numpy.__version__.split('.')[0]) < 2, f'ERROR: numpy {numpy.__version__} is >= 2.0'; print(f'numpy {numpy.__version__} installed')" || exit 1
     
-    # Now install everything else - pip will find numpy<2 compatible wheels
-    echo "Installing scGPT and all dependencies..."
+    # Install scGPT dependencies (without flash-attn first, to avoid numpy issues)
+    echo "Installing scGPT and dependencies..."
     /root/.local/bin/uv pip install --system \
         --preview-features extra-build-dependencies \
         "scgpt" "torch<=2.2.2" "umap-learn<0.5.7" \
-        "wandb" "python-louvain" "gdown" \
-        "flash-attn<1.0.5" \
-        "ipython" "jupyterlab" "matplotlib" "notebook" "pandas" "python-dotenv" "ruff" "scanpy" "scikit-learn" \
-        -e .
+        "wandb" "python-louvain" "gdown" || {
+        echo "ERROR: scGPT installation failed!"
+        exit 1
+    }
     
-    # Final check: ensure numpy<2 is still there
-    python -c "import numpy; assert int(numpy.__version__.split('.')[0]) < 2, f'ERROR: numpy upgraded to {numpy.__version__}'; print(f'✓ numpy {numpy.__version__} confirmed')" || {
-        echo "ERROR: numpy was upgraded to 2.x - forcing downgrade..."
+    # Install flash-attn separately and verify it works
+    echo "Installing flash-attn (required for scGPT)..."
+    /root/.local/bin/uv pip install --system \
+        --preview-features extra-build-dependencies \
+        "flash-attn<1.0.5" || {
+        echo "ERROR: flash-attn installation failed! This is required."
+        exit 1
+    }
+    
+    # Verify flash-attn installed and importable
+    python -c "import flash_attn; print(f'✓ flash-attn {flash_attn.__version__} installed')" || {
+        echo "ERROR: flash-attn import failed after installation!"
+        exit 1
+    }
+    
+    # Install base package dependencies ONE BY ONE to catch numpy upgrades
+    echo "Installing base package dependencies..."
+    for pkg in "ipython" "jupyterlab" "matplotlib" "notebook" "python-dotenv" "ruff" "scanpy" "scikit-learn"; do
+        echo "Installing $pkg..."
         /root/.local/bin/uv pip install --system \
             --preview-features extra-build-dependencies \
-            "numpy<2"
+            "$pkg" || {
+            echo "ERROR: Failed to install $pkg"
+            exit 1
+        }
+        # Check numpy after each install
+        python -c "import numpy; v = numpy.__version__; assert int(v.split('.')[0]) < 2, f'numpy upgraded to {v} during {pkg} install'; print(f'  numpy {v} OK')" || {
+            echo "ERROR: numpy was upgraded! Forcing back to <2..."
+            /root/.local/bin/uv pip install --system \
+                --preview-features extra-build-dependencies \
+                "numpy<2"
+        }
+    done
+    
+    # Install pandas LAST (it might pull in numpy 2.x)
+    echo "Installing pandas (last, may try to upgrade numpy)..."
+    /root/.local/bin/uv pip install --system \
+        --preview-features extra-build-dependencies \
+        "pandas" || {
+        echo "ERROR: pandas installation failed!"
+        exit 1
+    }
+    # Force numpy<2 after pandas
+    /root/.local/bin/uv pip install --system \
+        --preview-features extra-build-dependencies \
+        "numpy<2"
+    
+    # Install the package itself (no deps)
+    echo "Installing package in editable mode..."
+    /root/.local/bin/uv pip install --system \
+        --preview-features extra-build-dependencies \
+        --no-deps \
+        -e . || {
+        echo "ERROR: Package installation failed!"
+        exit 1
+    }
+    
+    # Final verification
+    python -c "import numpy; v = numpy.__version__; assert int(v.split('.')[0]) < 2, f'FINAL ERROR: numpy {v} is >= 2.0'; print(f'✓ FINAL: numpy {v} confirmed')" || {
+        echo "CRITICAL ERROR: numpy is >= 2.0 after all installations!"
+        exit 1
     }
     
     # Rebuild h5py from source to ensure it links against the installed HDF5 version
