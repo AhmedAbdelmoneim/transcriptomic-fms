@@ -142,11 +142,31 @@ PYEOF
     
     echo "flash-attn installed successfully"
 
-    # Install the package and all dependencies from pyproject.toml (in editable mode)
+    # Install scGPT FIRST (following official installation from https://github.com/bowang-lab/scGPT)
+    # This ensures all scGPT dependencies (including numpy<2) are installed correctly
+    echo "Installing scGPT (official method: pip install scgpt 'flash-attn<1.0.5')..."
+    /root/.local/bin/uv pip install --system \
+        --preview-features extra-build-dependencies \
+        "scgpt" "flash-attn<1.0.5"
+    
+    # Install additional dependencies from your Colab setup
+    echo "Installing additional scGPT dependencies..."
+    /root/.local/bin/uv pip install --system \
+        --preview-features extra-build-dependencies \
+        "gdown" "wandb" "python-louvain" "umap-learn<0.5.7" "pyarrow<14.0"
+    
+    # Install the package and dependencies from pyproject.toml (in editable mode)
+    # uv should respect existing numpy<2 installation from scGPT
     echo "Installing package and dependencies from pyproject.toml..."
     /root/.local/bin/uv pip install --system \
         --preview-features extra-build-dependencies \
         -e .
+    
+    # Ensure numpy<2 constraint is maintained (base package might try to upgrade)
+    echo "Ensuring numpy<2 constraint for scGPT compatibility..."
+    /root/.local/bin/uv pip install --system \
+        --preview-features extra-build-dependencies \
+        "numpy<2" || true
     
     # Rebuild h5py from source to ensure it links against the installed HDF5 version
     # h5py wheels may be built against a different HDF5 version than what's in the container
@@ -198,12 +218,10 @@ PYEOF
         echo "ERROR: h5py import failed after rebuild!"
         exit 1
     }
-
-    # Install scGPT-specific dependencies
-    echo "Installing scGPT-specific dependencies..."
-    /root/.local/bin/uv pip install --system \
-        --preview-features extra-build-dependencies \
-        "scgpt" "gdown" "pyarrow<14.0" "umap-learn<0.5.7" "wandb" "python-louvain"
+    
+    # Verify numpy version matches scGPT requirements
+    echo "Verifying numpy version..."
+    python -c "import numpy; print(f'numpy version: {numpy.__version__}')" || echo "WARNING: Could not verify numpy version"
 
     # Verify torch is still the CUDA version
     /root/.local/bin/uv pip install --system \
