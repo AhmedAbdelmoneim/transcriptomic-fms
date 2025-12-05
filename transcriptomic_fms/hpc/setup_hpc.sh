@@ -124,6 +124,9 @@ if [ "$GPU_REQUESTED" = "1" ]; then
 fi
 
 # Bind mount data, output, and models directories
+# Prevent Python from using user's local site-packages (which might conflict with container packages)
+# This ensures container packages are used instead of host packages
+export PYTHONNOUSERSITE=1
 $APPTAINER_CMD \
     --bind "$PROJ_ROOT/data:/transcriptomic-fms/data" \
     --bind "$PROJ_ROOT/output:/transcriptomic-fms/output" \

@@ -175,6 +175,7 @@ PYEOF
     export LD_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:/usr/lib:$LD_LIBRARY_PATH"
     export PYTHONPATH="/transcriptomic-fms:$PYTHONPATH"
     export PYTHONUNBUFFERED=1
+    export PYTHONNOUSERSITE=1
     export HDF5_DIR=/usr
 
 %runscript
