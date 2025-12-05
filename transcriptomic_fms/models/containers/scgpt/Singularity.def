@@ -16,7 +16,19 @@ From: nvidia/cuda:12.1.0-devel-ubuntu22.04
     export LD_LIBRARY_PATH="/usr/local/cuda/lib64:$LD_LIBRARY_PATH"
     
     # Update package lists and install system dependencies
-    apt-get update -qq
+    # Retry apt-get update in case of transient mirror sync issues
+    for i in 1 2 3; do
+        if apt-get update -qq; then
+            break
+        else
+            if [ $i -eq 3 ]; then
+                echo "ERROR: apt-get update failed after 3 attempts"
+                exit 1
+            fi
+            echo "apt-get update failed, retrying in 5 seconds... (attempt $i/3)"
+            sleep 5
+        fi
+    done
     apt-get install -y -qq --no-install-recommends \
         build-essential \
         git \
