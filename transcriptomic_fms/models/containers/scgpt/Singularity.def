@@ -85,88 +85,22 @@ From: nvidia/cuda:12.1.0-devel-ubuntu22.04
     }
     echo "PyTorch installed successfully"
 
-    # Install flash-attn using pre-built wheels (try wheel first, fall back to compilation)
-    echo "Installing flash-attn..."
-    python << 'PYEOF'
-import subprocess
-import sys
-import torch
-
-# Get PyTorch version and cxx11abi setting
-torch_ver = torch.__version__.split('+')[0]
-torch_major_minor = '.'.join(torch_ver.split('.')[:2])
-cxx11abi = "TRUE" if torch._C._GLIBCXX_USE_CXX11_ABI else "FALSE"
-
-# Map torch version to wheel version (cu122 wheels work with cu121)
-torch_to_wheel = {
-    "2.0": "2.1",  # Use 2.1 wheel for 2.0
-    "2.1": "2.1",
-    "2.2": "2.2",
-    "2.3": "2.2",  # Use 2.2 wheel for 2.3
-}
-
-wheel_torch_ver = torch_to_wheel.get(torch_major_minor, "2.2")
-wheel_url = (
-    f"https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.8/"
-    f"flash_attn-2.5.8%2Bcu122torch{wheel_torch_ver}cxx11abi{cxx11abi}-cp311-cp311-linux_x86_64.whl"
-)
-
-print(f"Trying pre-built wheel: torch {torch_major_minor}, cxx11abi={cxx11abi}")
-
-# Try installing wheel
-result = subprocess.run([
-    "/root/.local/bin/uv", "pip", "install", "--system",
-    "--preview-features", "extra-build-dependencies",
-    wheel_url
-], capture_output=True, text=True)
-
-if result.returncode == 0:
-    print("✓ Pre-built wheel installed successfully")
-    sys.exit(0)
-else:
-    print(f"Wheel installation failed, falling back to compilation...")
-    print(f"Error: {result.stderr[:200]}")
-    sys.exit(1)
-PYEOF
-
-    # If Python script exited with 1, compile from source
-    if [ $? -ne 0 ]; then
-        echo "Compiling flash-attn from source (this will take 30-60 minutes)..."
-        /root/.local/bin/uv pip install --system \
-            --preview-features extra-build-dependencies \
-            "flash-attn<1.0.5" || {
-            echo "ERROR: flash-attn installation failed!"
-            exit 1
-        }
-    fi
-    
-    echo "flash-attn installed successfully"
-
-    # Install scGPT FIRST (following official installation from https://github.com/bowang-lab/scGPT)
-    # This ensures all scGPT dependencies (including numpy<2) are installed correctly
-    echo "Installing scGPT (official method: pip install scgpt 'flash-attn<1.0.5')..."
+    # Install scGPT with flash-attn (official method from https://github.com/bowang-lab/scGPT)
+    # pip/uv will automatically use pre-built wheels if available, otherwise compile
+    echo "Installing scGPT with flash-attn and dependencies..."
     /root/.local/bin/uv pip install --system \
         --preview-features extra-build-dependencies \
-        "scgpt" "flash-attn<1.0.5"
-    
-    # Install additional dependencies from your Colab setup
-    echo "Installing additional scGPT dependencies..."
-    /root/.local/bin/uv pip install --system \
-        --preview-features extra-build-dependencies \
-        "gdown" "wandb" "python-louvain" "umap-learn<0.5.7" "pyarrow<14.0"
+        "scgpt" "flash-attn<1.0.5" \
+        "gdown" "wandb" "python-louvain" "umap-learn<0.5.7" "pyarrow<14.0" \
+        "numpy<2"
     
     # Install the package and dependencies from pyproject.toml (in editable mode)
-    # uv should respect existing numpy<2 installation from scGPT
+    # Install with numpy<2 constraint to prevent upgrade during base package install
     echo "Installing package and dependencies from pyproject.toml..."
     /root/.local/bin/uv pip install --system \
         --preview-features extra-build-dependencies \
+        "numpy<2" \
         -e .
-    
-    # Ensure numpy<2 constraint is maintained (base package might try to upgrade)
-    echo "Ensuring numpy<2 constraint for scGPT compatibility..."
-    /root/.local/bin/uv pip install --system \
-        --preview-features extra-build-dependencies \
-        "numpy<2" || true
     
     # Rebuild h5py from source to ensure it links against the installed HDF5 version
     # h5py wheels may be built against a different HDF5 version than what's in the container
