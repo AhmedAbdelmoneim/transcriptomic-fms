@@ -40,18 +40,13 @@ make embed MODEL=pca INPUT=data/test.h5ad OUTPUT=output/embeddings.npy \
 
 ### Generate Embeddings on HPC
 
-1. **Set up HPC environment** (one-time):
-```bash
-make setup-hpc
-```
-
-2. **Build model-specific container** (for scgpt, etc.):
+1. **Build model container** (for scgpt, etc.):
 ```bash
 module load apptainer
-make build-model-container MODEL=scgpt
+make build-container MODEL=scgpt
 ```
 
-3. **Run interactively** (for testing/debugging):
+2. **Run interactively** (for testing/debugging):
 ```bash
 # First, get an interactive GPU node
 salloc --time=4:00:00 --nodes=1 --cpus-per-task=8 --mem=64G \
@@ -62,17 +57,9 @@ make hpc-embed-interactive MODEL=scgpt \
     INPUT=data/test.h5ad \
     OUTPUT=output/embeddings.npy \
     MODEL_ARGS="--device cuda"
-
-# Or manually:
-export APPTAINER_USE_GPU=1
-./run_apptainer.sh python -m transcriptomic_fms.cli.main embed \
-    --model scgpt \
-    --input data/test.h5ad \
-    --output output/embeddings.npy \
-    --device cuda
 ```
 
-4. **Submit a batch job** (for production):
+3. **Submit a batch job** (for production):
 ```bash
 # Using Makefile
 make hpc-embed MODEL=scgpt INPUT=data/test.h5ad OUTPUT=output/embeddings.npy \

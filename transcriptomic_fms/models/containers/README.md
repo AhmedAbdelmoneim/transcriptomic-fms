@@ -4,50 +4,45 @@ This directory contains model-specific container definitions for HPC deployment.
 
 ## Structure
 
-Each model can have its own container definition:
+Each model has its own self-contained container definition:
 
 ```
 models/containers/
 ├── scgpt/
-│   └── Singularity.def    # scGPT-specific container
+│   └── Singularity.def    # scGPT container (self-contained)
 ├── pca/
-│   └── Singularity.def   # PCA container (optional, can use base)
+│   └── Singularity.def   # PCA container (self-contained)
 └── ...
 ```
 
-## Base Container
+## Container Structure
 
-The base container in `transcriptomic_fms/hpc/Singularity.def` includes:
-- Core dependencies (scanpy, numpy, pandas, etc.)
+Each model container is self-contained and includes:
+- System dependencies (HDF5, CUDA, etc.)
+- Core Python dependencies (scanpy, numpy, pandas, etc.)
 - PyTorch with CUDA support
-- flash-attn (compiled, takes 30-60 minutes but reusable)
+- flash-attn (installed using pre-built wheels - fast)
+- Model-specific dependencies
 - Base package installation
 
-**Note:** The base container includes GPU dependencies so they only need to be compiled once. Model-specific containers extend this base to avoid recompiling flash-attn.
-
-## Model-Specific Containers
-
-Model-specific containers:
-- **Extend the base container** using `Bootstrap: localimage` (avoids recompiling flash-attn)
-- Add model-specific dependencies (e.g., scGPT)
-- Include model checkpoints
-- Customize environment variables
-
-**Building order:**
-1. First build the base container: `make setup-hpc` (includes flash-attn compilation)
-2. Then build model containers: `make build-model-container MODEL=scgpt` (fast, extends base)
+**Note:** Each container is independent - no inheritance or base containers. This simplifies maintenance and avoids dependency conflicts.
 
 ## Building Model Containers
 
 ```bash
 # Build scGPT container
-make build-model-container MODEL=scgpt
+make build-container MODEL=scgpt
 
-# Build all model containers
-make build-all-containers
+# Containers are built from the project root
+# File paths in Singularity.def are relative to the build context
 ```
 
 ## Usage
 
-When submitting HPC jobs, the system will automatically use the model-specific container if available, otherwise falls back to the base container.
+When submitting HPC jobs, specify the model name and the system will use the corresponding container:
 
+```bash
+make hpc-embed-interactive MODEL=scgpt INPUT=data/test.h5ad OUTPUT=output/embeddings.npy
+```
+
+The container `transcriptomic-fms-scgpt.sif` will be used automatically.
