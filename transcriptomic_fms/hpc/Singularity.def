@@ -68,19 +68,74 @@ From: nvidia/cuda:12.1.0-devel-ubuntu22.04
     }
     echo "PyTorch installed successfully"
 
-    # Install flash-attn (REQUIRED - CUDA toolkit already installed above)
-    echo "Installing flash-attn (this will take 30-60 minutes to compile)..."
+    # Install flash-attn using pre-built wheels (much faster than compilation)
+    echo "Installing flash-attn using pre-built wheels..."
     
-    NVCC_VERSION=$(nvcc --version 2>/dev/null | grep "release" | sed -n 's/.*release \([0-9.]*\).*/\1/p' | head -1 || echo "unknown")
-    echo "nvcc found (CUDA $NVCC_VERSION)"
-    echo "Starting flash-attn compilation (this is slow but normal)..."
+    # Detect PyTorch version and cxx11abi setting to select the right wheel
+    TORCH_VERSION=$(python -c "import torch; print(torch.__version__)" 2>/dev/null || echo "")
+    CUDA_VERSION=$(python -c "import torch; print(torch.version.cuda)" 2>/dev/null || echo "12.1")
+    CXX11ABI=$(python -c "import torch; print(torch._C._GLIBCXX_USE_CXX11_ABI)" 2>/dev/null || echo "False")
     
-    /root/.local/bin/uv pip install --system \
-        --preview-features extra-build-dependencies \
-        "flash-attn<1.0.5" || {
-        echo "ERROR: flash-attn installation failed!"
-        exit 1
-    }
+    echo "Detected: PyTorch $TORCH_VERSION, CUDA $CUDA_VERSION, cxx11abi=$CXX11ABI"
+    
+    # Determine which wheel to use
+    # Flash-attn wheels use format: flash_attn-VERSION+cuXXXtorchYYYcxx11abiBOOL-cp311-cp311-linux_x86_64.whl
+    # We'll try to find a compatible wheel for cu121/cu122 and torch 2.0-2.3
+    FLASH_ATTN_WHEEL_URL=""
+    
+    # Try to determine torch major.minor version
+    TORCH_MAJOR_MINOR=$(echo "$TORCH_VERSION" | sed -n 's/^\([0-9]\+\.[0-9]\+\).*/\1/p')
+    CXX11ABI_STR="FALSE"
+    if [ "$CXX11ABI" = "True" ] || [ "$CXX11ABI" = "1" ]; then
+        CXX11ABI_STR="TRUE"
+    fi
+    
+    # Use flash-attn 2.5.8 which has wheels for cu122 and torch 2.1/2.2/2.3 (compatible with cu121)
+    # cu122 wheels should work with cu121 (minor version difference)
+    if [ "$TORCH_MAJOR_MINOR" = "2.2" ] || [ "$TORCH_MAJOR_MINOR" = "2.3" ]; then
+        # Use torch 2.2 wheel (should work with 2.2 and 2.3)
+        FLASH_ATTN_WHEEL_URL="https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.8/flash_attn-2.5.8%2Bcu122torch2.2cxx11abi${CXX11ABI_STR}-cp311-cp311-linux_x86_64.whl"
+        echo "Using pre-built wheel: flash-attn 2.5.8 for torch $TORCH_MAJOR_MINOR, cu122, cxx11abi=$CXX11ABI_STR"
+    elif [ "$TORCH_MAJOR_MINOR" = "2.1" ]; then
+        # Use torch 2.1 wheel
+        FLASH_ATTN_WHEEL_URL="https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.8/flash_attn-2.5.8%2Bcu122torch2.1cxx11abi${CXX11ABI_STR}-cp311-cp311-linux_x86_64.whl"
+        echo "Using pre-built wheel: flash-attn 2.5.8 for torch 2.1, cu122, cxx11abi=$CXX11ABI_STR"
+    elif [ "$TORCH_MAJOR_MINOR" = "2.0" ]; then
+        # Use torch 2.1 wheel (should work with 2.0)
+        FLASH_ATTN_WHEEL_URL="https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.8/flash_attn-2.5.8%2Bcu122torch2.1cxx11abi${CXX11ABI_STR}-cp311-cp311-linux_x86_64.whl"
+        echo "Using pre-built wheel: flash-attn 2.5.8 for torch 2.0 (using 2.1 wheel), cu122, cxx11abi=$CXX11ABI_STR"
+    else
+        echo "Warning: Unsupported PyTorch version $TORCH_MAJOR_MINOR, falling back to compilation"
+        FLASH_ATTN_WHEEL_URL=""
+    fi
+    
+    # Try to install pre-built wheel if available
+    WHEEL_INSTALLED=0
+    if [ -n "$FLASH_ATTN_WHEEL_URL" ]; then
+        echo "Downloading and installing pre-built wheel (this should be fast)..."
+        if /root/.local/bin/uv pip install --system \
+            --preview-features extra-build-dependencies \
+            "$FLASH_ATTN_WHEEL_URL"; then
+            WHEEL_INSTALLED=1
+            echo "Pre-built wheel installed successfully"
+        else
+            echo "Warning: Pre-built wheel installation failed, falling back to compilation..."
+        fi
+    fi
+    
+    # Fall back to compilation if wheel installation failed or no compatible wheel found
+    if [ "$WHEEL_INSTALLED" = "0" ]; then
+        echo "Compiling flash-attn from source (this will take 30-60 minutes)..."
+        NVCC_VERSION=$(nvcc --version 2>/dev/null | grep "release" | sed -n 's/.*release \([0-9.]*\).*/\1/p' | head -1 || echo "unknown")
+        echo "nvcc found (CUDA $NVCC_VERSION)"
+        /root/.local/bin/uv pip install --system \
+            --preview-features extra-build-dependencies \
+            "flash-attn<1.0.5" || {
+            echo "ERROR: flash-attn installation failed!"
+            exit 1
+        }
+    fi
+    
     echo "flash-attn installed successfully"
 
     # Install the package and all dependencies from pyproject.toml (in editable mode)
