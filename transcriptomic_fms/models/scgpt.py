@@ -262,6 +262,20 @@ class SCGPTModel(BaseEmbeddingModel):
         print(f"Source: {SCGPT_MODEL_URL}")
 
         try:
+            # Set SSL certificate path for gdown (Ubuntu/Debian locations)
+            import os
+            import ssl
+            cert_paths = [
+                "/etc/ssl/certs/ca-certificates.crt",
+                "/etc/ssl/certs/ca-bundle.crt",
+                "/usr/lib/ssl/certs/ca-certificates.crt",
+            ]
+            for cert_path in cert_paths:
+                if os.path.exists(cert_path):
+                    os.environ.setdefault("REQUESTS_CA_BUNDLE", cert_path)
+                    os.environ.setdefault("SSL_CERT_FILE", cert_path)
+                    break
+            
             gdown.download_folder(
                 SCGPT_MODEL_URL,
                 output=str(self.model_dir),
