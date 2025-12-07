@@ -514,9 +514,10 @@ class GeneformerModel(BaseEmbeddingModel):
             shutil.copy(str(tmp_loom), str(input_dir / "data.loom"))
 
             tokenizer.tokenize_data(
-                input_data_path=str(input_dir),
+                data_directory=str(input_dir),
                 output_directory=str(output_dir),
                 output_prefix="tokenized",
+                file_format="loom",
             )
 
         return output_dir
