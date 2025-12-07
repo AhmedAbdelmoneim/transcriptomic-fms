@@ -205,6 +205,20 @@ class SCGPTModel(BaseEmbeddingModel):
         if "gene_symbols" not in adata.var.columns:
             adata.var["gene_symbols"] = adata.var.index
 
+        # Filter out cells with all-zero expression (empty rows)
+        # This prevents errors in binning when encountering zero-size arrays
+        import numpy as np
+
+        cell_sums = np.array(adata.X.sum(axis=1)).flatten()
+        non_zero_cells = cell_sums > 0
+        if not np.all(non_zero_cells):
+            n_filtered = np.sum(~non_zero_cells)
+            print(
+                f"Filtering out {n_filtered} cells with all-zero expression "
+                f"(out of {adata.n_obs} total cells)"
+            )
+            adata = adata[non_zero_cells, :].copy()
+
         # Create preprocessor and bin data
         preprocessor = Preprocessor(
             use_key="X",  # Use raw data from .X
