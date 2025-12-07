@@ -1,48 +1,93 @@
 Bootstrap: docker
-From: pytorch/pytorch:1.13.0-cuda11.6-cudnn8-devel
+From: nvidia/cuda:11.7.1-cudnn8-devel-ubuntu22.04
 
 %files
     pyproject.toml /transcriptomic-fms/
     README.md /transcriptomic-fms/
     transcriptomic_fms /transcriptomic-fms/transcriptomic_fms
 
+%labels
+    Author "Ahmed Sallam"
+    Version "0.1.0"
+    Description "Transcriptomic Foundation Models - scGPT container with CUDA support"
+
 %post
-    # Set environment variable to prevent interactive prompts
+    # 1. System Dependency Installation
+    # We need r-base because scGPT has R dependencies (rpy2)
     export DEBIAN_FRONTEND=noninteractive
+    apt-get update && apt-get install -y \
+        python3 \
+        python3-pip \
+        python3-dev \
+        git \
+        build-essential \
+        r-base \
+        wget \
+        pkg-config \
+        tzdata
 
-    # Update the package list and install packages
-    apt-get update -y
-    apt-get install -y git r-base tzdata
+    # Link python3 to python for convenience
+    ln -s /usr/bin/python3 /usr/bin/python
 
-    # Install Python packages using pip (following proven working method)
+    # 2. Python Environment Setup
+    # Upgrade pip to handle modern wheels
+    pip3 install --upgrade pip setuptools wheel
+
+    # 3. Install PyTorch (CUDA 11.7 specific)
+    # scGPT works best with Torch 1.13.1 when using the recommended older flash-attn.
+    # We install this BEFORE scgpt to prevent it from pulling a CPU version.
+    pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 \
+        --extra-index-url https://download.pytorch.org/whl/cu117
+
+    # 4. Install PyArrow explicitly
+    # Installing this via pip in a fresh container avoids the common "snappy codec"
+    # and "ABI mismatch" errors seen in Conda/System envs.
+    pip install pyarrow
+
+    # 5. Install Flash Attention (The difficult dependency)
+    # The README recommends <1.0.5 for stability with this CUDA version.
+    # We enable build isolation to ensure it links against our fresh PyTorch.
+    pip install "flash-attn<1.0.5" --no-build-isolation
+
+    # 6. Install scGPT
+    # We constrain orbax as noted in their installation issues.
     pip install packaging
-    pip install scgpt "flash-attn<1.0.5"
+    pip install scgpt "orbax<0.1.8"
+
+    # 7. Install additional dependencies
     pip install markupsafe==2.0.1
     pip install wandb
-    pip uninstall torch -y
-    pip install torch==1.13.0+cu116 -f https://download.pytorch.org/whl/torch_stable.html
     pip install pyro-ppl==1.8.6
 
-    # Install additional dependencies for our package
+    # 8. Install project-specific dependencies
     pip install "pandas" "scanpy" "gdown" "python-louvain" "umap-learn<0.5.7"
     pip install "ipython" "jupyterlab" "matplotlib" "notebook" "python-dotenv" "ruff" "scikit-learn"
 
-    # Set working directory and install our package
+    # 9. Set working directory and install our package
     # Use --no-deps to prevent pip from upgrading any packages we've carefully pinned
     cd /transcriptomic-fms
     pip install --no-deps -e .
 
-    # Create data and output directories
+    # 10. Create data and output directories
     mkdir -p /transcriptomic-fms/data
     mkdir -p /transcriptomic-fms/output
     mkdir -p /transcriptomic-fms/models
 
 %environment
+    # Set locale to avoid R/Python encoding issues
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
     export DEBIAN_FRONTEND=noninteractive
-    export PATH=/opt/conda/bin:$PATH
+    
+    # Ensure CUDA paths are visible
+    export CUDA_HOME=/usr/local/cuda
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64
+
+    # Project-specific environment variables
     export PYTHONPATH="/transcriptomic-fms:$PYTHONPATH"
     export PYTHONUNBUFFERED=1
     export PYTHONNOUSERSITE=1
+    
     # Set SSL certificate paths for gdown
     export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
     export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
@@ -51,8 +96,3 @@ From: pytorch/pytorch:1.13.0-cuda11.6-cudnn8-devel
 %runscript
     # Default command
     exec python -m transcriptomic_fms.cli.main "$@"
-
-%labels
-    Author "Ahmed Sallam"
-    Version "0.1.0"
-    Description "Transcriptomic Foundation Models - scGPT container with CUDA support"
