@@ -35,8 +35,8 @@ except ImportError:
 
 # Default Geneformer model HuggingFace repository
 GENEFORMER_MODEL_REPO = "https://huggingface.co/ctheodoris/Geneformer"
-GENEFORMER_MODEL_VERSION = "V1-10M"
-GENEFORMER_MODEL_DIR = f"Geneformer-{GENEFORMER_MODEL_VERSION}"
+GENEFORMER_MODEL_VERSION = "V1"  # Model version for EmbExtractor (V1 or V2)
+GENEFORMER_MODEL_DIR = "Geneformer-V1-10M"  # Directory name in repository
 
 
 @register_model("geneformer")
@@ -223,7 +223,7 @@ class GeneformerModel(BaseEmbeddingModel):
                 forward_batch_size=self.batch_size,
                 nproc=4,  # Default number of processes
                 emb_layer=-1,  # 2nd to last layer (fixed)
-                model_version=GENEFORMER_MODEL_VERSION,
+                model_version=GENEFORMER_MODEL_VERSION,  # "V1" or "V2"
                 token_dictionary_file=str(self.token_dict_file) if self.token_dict_file else None,
             )
         return self._extractor
