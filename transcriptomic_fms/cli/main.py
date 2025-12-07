@@ -234,25 +234,8 @@ def list_command(args: argparse.Namespace) -> None:
 
     logger.info("Available models:")
     for model_name in models:
-        # Check if model has optional dependencies from pyproject.toml
-        # This doesn't require the dependencies to be installed
-        if model_name in optional_deps:
-            logger.info(f"  - {model_name} (requires optional dependencies: {model_name})")
-        else:
-            # Try to get from model instance if available (but don't fail if not)
-            try:
-                model = get_model(model_name)
-                deps = model.get_optional_dependency_group()
-                if deps:
-                    logger.info(f"  - {model_name} (requires: {deps})")
-                else:
-                    logger.info(f"  - {model_name}")
-            except Exception:
-                # Model can't be instantiated (missing deps), but we know it exists
-                if model_name in optional_deps:
-                    logger.info(f"  - {model_name} (requires optional dependencies: {model_name})")
-                else:
-                    logger.info(f"  - {model_name}")
+        # Just list the model name - dependencies are handled when actually using the model
+        logger.info(f"  - {model_name}")
 
 
 def install_model_command(args: argparse.Namespace) -> None:
