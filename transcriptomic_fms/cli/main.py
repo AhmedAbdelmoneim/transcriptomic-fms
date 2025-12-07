@@ -133,8 +133,6 @@ def embed_command(args: argparse.Namespace, model_args: dict[str, Any]) -> None:
         )
         output_path = output_path.with_suffix(".npy")
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
     # Load model with model-specific arguments
     try:
         logger.info(f"Loading model: {args.model}")
@@ -163,6 +161,17 @@ def embed_command(args: argparse.Namespace, model_args: dict[str, Any]) -> None:
     except ValueError as e:
         logger.error(f"Model error: {e}")
         sys.exit(1)
+
+    # Prefix model name to output filename
+    # e.g., embeddings.npy -> scimilarity_embeddings.npy
+    # or output/embeddings.npy -> output/scimilarity_embeddings.npy
+    output_dir = output_path.parent
+    base_name = output_path.stem
+    prefixed_filename = f"{args.model}_{base_name}.npy"
+    output_path = output_dir / prefixed_filename
+    logger.info(f"Output will be saved as: {output_path}")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Load AnnData
     logger.info(f"Loading AnnData from {input_path}...")

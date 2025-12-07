@@ -147,13 +147,13 @@ class SCimilarityModel(BaseEmbeddingModel):
     def _find_actual_model_path(self) -> Path:
         """
         Find the actual model directory.
-        
+
         The model may be in a subdirectory (e.g., model_v1.1) after extraction.
         This method searches for the actual model directory containing gene_order.tsv.
-        
+
         Returns:
             Path to the actual model directory
-            
+
         Raises:
             ValueError: If model directory cannot be found
         """
@@ -162,11 +162,11 @@ class SCimilarityModel(BaseEmbeddingModel):
                 "model_path must be provided. Set it in model initialization, "
                 "via --model-path argument, or enable auto_download."
             )
-        
+
         # Check if model_path itself contains gene_order.tsv
         if (self.model_path / "gene_order.tsv").exists():
             return self.model_path
-        
+
         # Look for subdirectories that might contain the model
         # Common patterns: model_v1.1, model, v1.1, etc.
         for item in self.model_path.iterdir():
@@ -174,7 +174,7 @@ class SCimilarityModel(BaseEmbeddingModel):
                 # Check if this subdirectory contains gene_order.tsv
                 if (item / "gene_order.tsv").exists():
                     return item
-        
+
         # If not found, raise an error
         raise ValueError(
             f"Model files not found in {self.model_path} or its subdirectories. "
@@ -187,7 +187,9 @@ class SCimilarityModel(BaseEmbeddingModel):
         if self._model is None:
             if self._actual_model_path is None:
                 self._actual_model_path = self._find_actual_model_path()
-            self._model = CellEmbedding(model_path=str(self._actual_model_path), use_gpu=self.use_gpu)
+            self._model = CellEmbedding(
+                model_path=str(self._actual_model_path), use_gpu=self.use_gpu
+            )
         return self._model
 
     def preprocess(self, adata: sc.AnnData, output_path: Optional[Path] = None) -> sc.AnnData:
@@ -215,13 +217,13 @@ class SCimilarityModel(BaseEmbeddingModel):
         # We need to find the actual model directory before initializing the model
         if self._actual_model_path is None:
             self._actual_model_path = self._find_actual_model_path()
-        
+
         # Get the model to access gene_order
         model = self._get_model()
 
         # Determine gene symbols
         gene_symbols = self._get_gene_symbols(adata)
-        
+
         # Store original gene names if needed
         if "feature_name" not in adata.var.columns:
             adata.var["feature_name"] = gene_symbols
@@ -230,7 +232,7 @@ class SCimilarityModel(BaseEmbeddingModel):
         # Store raw counts in layers if not already there
         if "counts" not in adata.layers:
             adata.layers["counts"] = adata.X.copy()
-        
+
         # Set var_names to uppercase gene symbols (SCimilarity expects uppercase)
         adata.var_names = [g.upper() for g in gene_symbols]
 
@@ -239,7 +241,7 @@ class SCimilarityModel(BaseEmbeddingModel):
 
         # Align dataset to model's gene order
         adata = align_dataset(adata, model.gene_order)
-        
+
         # Log-normalize
         adata = lognorm_counts(adata)
 
@@ -297,13 +299,13 @@ class SCimilarityModel(BaseEmbeddingModel):
         # Check if model_path itself contains gene_order.tsv (the key file)
         if (self.model_path / "gene_order.tsv").exists():
             return True
-        
+
         # Look for subdirectories that contain the model
         # The model is typically in a subdirectory like model_v1.1 after extraction
         for item in self.model_path.iterdir():
             if item.is_dir() and (item / "gene_order.tsv").exists():
                 return True
-        
+
         return False
 
     def _download_model(self) -> None:
@@ -332,7 +334,7 @@ class SCimilarityModel(BaseEmbeddingModel):
             # Save to temporary file first
             tar_path = self.model_path / "model_v1.1.tar.gz"
             total_size = int(response.headers.get("content-length", 0))
-            
+
             with open(tar_path, "wb") as f:
                 downloaded = 0
                 for chunk in response.iter_content(chunk_size=8192):
@@ -342,31 +344,31 @@ class SCimilarityModel(BaseEmbeddingModel):
                         if total_size > 0:
                             percent = (downloaded / total_size) * 100
                             print(f"\rDownloaded: {percent:.1f}%", end="", flush=True)
-            
+
             print()  # New line after progress
 
             # Verify MD5 checksum
             print("Verifying checksum...")
             with open(tar_path, "rb") as f:
                 file_hash = hashlib.md5(f.read()).hexdigest()
-            
+
             if file_hash != SCIMILARITY_MODEL_MD5:
                 tar_path.unlink()  # Remove corrupted file
                 raise RuntimeError(
                     f"MD5 checksum mismatch. Expected {SCIMILARITY_MODEL_MD5}, got {file_hash}. "
                     f"Download may be corrupted. Please try again."
                 )
-            
+
             print("Checksum verified.")
 
             # Extract the tarball
             print("Extracting model files...")
             with tarfile.open(tar_path, "r:gz") as tar:
                 tar.extractall(path=self.model_path)
-            
+
             # Remove the tarball to save space
             tar_path.unlink()
-            
+
             # Verify extraction
             if not self._model_exists():
                 raise RuntimeError(
