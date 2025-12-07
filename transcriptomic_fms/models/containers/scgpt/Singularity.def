@@ -8,12 +8,11 @@ From: nvidia/cuda:11.7.1-cudnn8-devel-ubuntu22.04
 
 %labels
     Author "Ahmed Sallam"
-    Version "0.1.2"
-    Description "Transcriptomic Foundation Models - scGPT container (Fixed Dependency Resolution)"
+    Version "0.1.3"
+    Description "Transcriptomic Foundation Models - scGPT container (Fixed NumPy + TorchText)"
 
 %post
     # 1. System Dependency Installation
-    # Added 'ninja-build' which is REQUIRED for flash-attn to compile
     export DEBIAN_FRONTEND=noninteractive
     apt-get update && apt-get install -y \
         python3 \
@@ -37,44 +36,47 @@ From: nvidia/cuda:11.7.1-cudnn8-devel-ubuntu22.04
     sed -i 's/requires-python = ">=3.11"/requires-python = ">=3.10"/g' /transcriptomic-fms/pyproject.toml
     sed -i "s/requires-python = '>=3.11'/requires-python = '>=3.10'/g" /transcriptomic-fms/pyproject.toml
 
-    # 4. Install PyTorch + TorchText (Strictly Pinned)
-    # We install these first to establish the base "Golden Triangle" of versions.
+    # 4. CRITICAL FIX: Pin NumPy < 2.0
+    # PyTorch 1.13 and scGPT will crash with NumPy 2.x
+    pip install "numpy<2"
+
+    # 5. Install PyTorch + TorchText (Strictly Pinned)
     pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 torchtext==0.14.1 \
         --extra-index-url https://download.pytorch.org/whl/cu117
 
-    # 5. Install PyArrow
+    # 6. Install PyArrow
     pip install pyarrow
 
-    # 6. Install Flash Attention
+    # 7. Install Flash Attention
     # We use --no-build-isolation to force it to use our existing PyTorch
     pip install "flash-attn<1.0.5" --no-build-isolation
 
-    # 7. Install scGPT (CRITICAL FIX HERE)
-    # We RE-PIN torchtext==0.14.1 here.
-    # Without this, pip sees scgpt needs torchtext and upgrades it to the latest version, breaking everything.
+    # 8. Install scGPT 
+    # We keep the torchtext pin here to prevent pip from upgrading it
     pip install scgpt "orbax<0.1.8" torchtext==0.14.1
 
-    # 8. Install additional dependencies
+    # 9. Install additional dependencies
     pip install markupsafe==2.0.1
     pip install wandb
     pip install pyro-ppl==1.8.6
 
-    # 9. Install project dependencies (excluding project itself)
+    # 10. Install project dependencies
+    # We install these one by one to avoid dependency resolver upgrading our pinned packages
     pip install "pandas" "scanpy" "gdown" "python-louvain" "umap-learn<0.5.7"
     pip install "ipython" "jupyterlab" "matplotlib" "notebook" "python-dotenv" "ruff" "scikit-learn"
 
-    # 10. Install our package
+    # 11. Install our package
     cd /transcriptomic-fms
     pip install --no-deps --ignore-requires-python -e .
 
-    # 11. Create directories
+    # 12. Create directories
     mkdir -p /transcriptomic-fms/data
     mkdir -p /transcriptomic-fms/output
     mkdir -p /transcriptomic-fms/models
     
-    # 12. DEBUG: Verify versions
+    # 13. DEBUG: Final Version Check
     echo "=== FINAL VERSION CHECK ==="
-    pip list | grep -E "torch|scgpt|flash-attn"
+    pip list | grep -E "torch|scgpt|flash-attn|numpy"
 
 %environment
     export LC_ALL=C.UTF-8
