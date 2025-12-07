@@ -8,8 +8,8 @@ From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
 %labels
     Author "Ahmed Sallam"
-    Version "0.3.1-H100"
-    Description "scGPT ported for H100 (PyTorch 2.1.1, No FlashAttn)"
+    Version "0.3.2-H100"
+    Description "scGPT H100 (PyTorch 2.1.1 + Missing Deps Added)"
 
 %post
     # 1. System Dependency Installation
@@ -33,38 +33,43 @@ From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
     sed -i "s/requires-python = '>=3.11'/requires-python = '>=3.10'/g" /transcriptomic-fms/pyproject.toml
 
     # 3. CRITICAL: Pin NumPy < 2
+    # This must happen before installing ANY data libraries
     pip install "numpy<2"
 
     # 4. Install PyTorch 2.1.1 (H100 Compatible)
-    # We downgraded from 2.1.2 to 2.1.1 strictly to satisfy torchtext 0.16.1
+    # Downgraded to 2.1.1 to satisfy torchtext 0.16.1 requirements
     pip install torch==2.1.1 torchvision==0.16.1 torchaudio==2.1.1 torchtext==0.16.1 \
         --index-url https://download.pytorch.org/whl/cu121
 
-    # 5. Install Core Dependencies
+    # 5. Install scGPT dependencies (The ones we skipped earlier)
+    # scGPT needs these to import, but they are safe for H100
+    pip install "transformers>=4.28.0" "datasets" "scvi-tools" "scib"
+    
+    # 6. Install Core Dependencies
     pip install pyarrow
     pip install "orbax<0.1.8"
     pip install markupsafe==2.0.1 wandb pyro-ppl==1.8.6
 
-    # 6. Install scGPT (MANUALLY)
-    # We install with --no-deps to prevent it from pulling broken flash-attn
+    # 7. Install scGPT (MANUALLY)
+    # We use --no-deps to BLOCK it from pulling the broken flash-attn
     pip install scgpt --no-deps
 
-    # 7. Install Project Dependencies
+    # 8. Install Project Dependencies
     pip install "pandas" "scanpy" "gdown" "python-louvain" "umap-learn<0.5.7"
     pip install "ipython" "jupyterlab" "matplotlib" "notebook" "python-dotenv" "ruff" "scikit-learn"
 
-    # 8. Install our package
+    # 9. Install our package
     cd /transcriptomic-fms
     pip install --no-deps --ignore-requires-python -e .
 
-    # 9. Create directories
+    # 10. Create directories
     mkdir -p /transcriptomic-fms/data
     mkdir -p /transcriptomic-fms/output
     mkdir -p /transcriptomic-fms/models
 
-    # 10. Final Verification
+    # 11. Final Verification
     echo "=== VERSION CHECK ==="
-    pip list | grep -E "torch|scgpt|numpy"
+    pip list | grep -E "torch|scgpt|numpy|transformers|scvi"
 
 %environment
     export LC_ALL=C.UTF-8
@@ -73,7 +78,6 @@ From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
     
     export CUDA_HOME=/usr/local/cuda
     export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64
-
     export PYTHONPATH="/transcriptomic-fms:$PYTHONPATH"
     export PYTHONUNBUFFERED=1
     export PYTHONNOUSERSITE=1
