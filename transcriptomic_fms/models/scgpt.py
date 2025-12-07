@@ -146,7 +146,8 @@ class SCGPTModel(BaseEmbeddingModel):
                         f"Set auto_download=True to download automatically."
                     )
             else:
-                print(f"Using scGPT model from: {self.model_dir}")
+                import sys
+                print(f"Using scGPT model from: {self.model_dir}", file=sys.stderr)
 
     def preprocess(self, adata: sc.AnnData, output_path: Optional[Path] = None) -> sc.AnnData:
         """
