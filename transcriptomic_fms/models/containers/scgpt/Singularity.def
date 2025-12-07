@@ -96,8 +96,8 @@ From: nvidia/cuda:12.1.0-devel-ubuntu22.04
         --preview-features extra-build-dependencies \
         --upgrade "numpy<1.24"
     
-    # Verify numpy version
-    python -c "import numpy; v = numpy.__version__; from packaging import version; assert version.parse(v) < version.parse('1.24'), f'ERROR: numpy {v} is >= 1.24'; print(f'✓ numpy {v} installed (< 1.24)')" || exit 1
+    # Verify numpy version (simple check: major.minor must be < 1.24)
+    python -c "import numpy; v = numpy.__version__; parts = v.split('.'); major, minor = int(parts[0]), int(parts[1]); assert major < 1 or (major == 1 and minor < 24), f'ERROR: numpy {v} is >= 1.24'; print(f'✓ numpy {v} installed (< 1.24)')" || exit 1
     
     # Install flash-attn with --no-build-isolation (as per working example)
     echo "Installing flash-attn with --no-build-isolation (proven method)..."
@@ -166,9 +166,11 @@ From: nvidia/cuda:12.1.0-devel-ubuntu22.04
     # Final verification - BUILD FAILS if numpy >= 1.24
     python << 'PYEOF'
 import numpy
-from packaging import version
 v = numpy.__version__
-if version.parse(v) >= version.parse('1.24'):
+parts = v.split('.')
+major = int(parts[0])
+minor = int(parts[1]) if len(parts) > 1 else 0
+if major > 1 or (major == 1 and minor >= 24):
     print(f"❌ CRITICAL ERROR: numpy {v} is >= 1.24")
     print("Forcing downgrade to numpy 1.23.5...")
     import subprocess
@@ -186,7 +188,10 @@ if version.parse(v) >= version.parse('1.24'):
     import importlib
     importlib.reload(numpy)
     v2 = numpy.__version__
-    if version.parse(v2) >= version.parse('1.24'):
+    parts2 = v2.split('.')
+    major2 = int(parts2[0])
+    minor2 = int(parts2[1]) if len(parts2) > 1 else 0
+    if major2 > 1 or (major2 == 1 and minor2 >= 24):
         print(f"STILL FAILED: numpy {v2} is >= 1.24")
         sys.exit(1)
     print(f"✓ Emergency fix: numpy {v2}")
