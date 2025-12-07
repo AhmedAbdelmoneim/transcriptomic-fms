@@ -208,6 +208,7 @@ class SCGPTModel(BaseEmbeddingModel):
         # Filter out cells with all-zero expression (empty rows)
         # This prevents errors in binning when encountering zero-size arrays
         import numpy as np
+
         cell_sums = np.array(adata.X.sum(axis=1)).flatten()
         non_zero_cells = cell_sums > 0
         if not np.all(non_zero_cells):
