@@ -8,8 +8,8 @@ From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
 %labels
     Author "Ahmed Sallam"
-    Version "0.3.0-H100"
-    Description "scGPT ported for H100 (PyTorch 2.1, No FlashAttn)"
+    Version "0.3.1-H100"
+    Description "scGPT ported for H100 (PyTorch 2.1.1, No FlashAttn)"
 
 %post
     # 1. System Dependency Installation
@@ -25,51 +25,44 @@ From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
         pkg-config \
         tzdata
 
-    # Link python3 to python
     ln -s /usr/bin/python3 /usr/bin/python
-
-    # 2. Python Setup
     pip3 install --upgrade pip setuptools wheel packaging
 
-    # 3. Patch pyproject.toml
-    # We edit the requirement to allow Python 3.10
+    # 2. Patch pyproject.toml
     sed -i 's/requires-python = ">=3.11"/requires-python = ">=3.10"/g' /transcriptomic-fms/pyproject.toml
     sed -i "s/requires-python = '>=3.11'/requires-python = '>=3.10'/g" /transcriptomic-fms/pyproject.toml
 
-    # 4. CRITICAL: Pin NumPy < 2
-    # Even modern libraries struggle with NumPy 2.0 right now.
+    # 3. CRITICAL: Pin NumPy < 2
     pip install "numpy<2"
 
-    # 5. Install PyTorch 2.1 (H100 Native)
-    # We also install the matching torchtext (0.16.1) to prevent symbol errors.
-    pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 torchtext==0.16.1 \
+    # 4. Install PyTorch 2.1.1 (H100 Compatible)
+    # We downgraded from 2.1.2 to 2.1.1 strictly to satisfy torchtext 0.16.1
+    pip install torch==2.1.1 torchvision==0.16.1 torchaudio==2.1.1 torchtext==0.16.1 \
         --index-url https://download.pytorch.org/whl/cu121
 
-    # 6. Install Core Dependencies
+    # 5. Install Core Dependencies
     pip install pyarrow
     pip install "orbax<0.1.8"
     pip install markupsafe==2.0.1 wandb pyro-ppl==1.8.6
 
-    # 7. Install scGPT (MANUALLY)
-    # We install with --no-deps to prevent it from trying to pull the broken flash-attn
-    # or downgrading our PyTorch.
+    # 6. Install scGPT (MANUALLY)
+    # We install with --no-deps to prevent it from pulling broken flash-attn
     pip install scgpt --no-deps
 
-    # 8. Install Project Dependencies
-    # Installed carefully to avoid upgrading numpy or torch
+    # 7. Install Project Dependencies
     pip install "pandas" "scanpy" "gdown" "python-louvain" "umap-learn<0.5.7"
     pip install "ipython" "jupyterlab" "matplotlib" "notebook" "python-dotenv" "ruff" "scikit-learn"
 
-    # 9. Install our package
+    # 8. Install our package
     cd /transcriptomic-fms
     pip install --no-deps --ignore-requires-python -e .
 
-    # 10. Create directories
+    # 9. Create directories
     mkdir -p /transcriptomic-fms/data
     mkdir -p /transcriptomic-fms/output
     mkdir -p /transcriptomic-fms/models
 
-    # 11. Final Verification
+    # 10. Final Verification
     echo "=== VERSION CHECK ==="
     pip list | grep -E "torch|scgpt|numpy"
 
@@ -78,7 +71,6 @@ From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
     export LANG=C.UTF-8
     export DEBIAN_FRONTEND=noninteractive
     
-    # CUDA Paths for H100
     export CUDA_HOME=/usr/local/cuda
     export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64
 
@@ -86,7 +78,6 @@ From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
     export PYTHONUNBUFFERED=1
     export PYTHONNOUSERSITE=1
     
-    # SSL Fixes
     export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
     export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
     export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
