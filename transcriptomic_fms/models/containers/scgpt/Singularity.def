@@ -8,11 +8,12 @@ From: nvidia/cuda:11.7.1-cudnn8-devel-ubuntu22.04
 
 %labels
     Author "Ahmed Sallam"
-    Version "0.1.1"
-    Description "Transcriptomic Foundation Models - scGPT container (Fixed torchtext)"
+    Version "0.1.2"
+    Description "Transcriptomic Foundation Models - scGPT container (Fixed Dependency Resolution)"
 
 %post
     # 1. System Dependency Installation
+    # Added 'ninja-build' which is REQUIRED for flash-attn to compile
     export DEBIAN_FRONTEND=noninteractive
     apt-get update && apt-get install -y \
         python3 \
@@ -24,7 +25,7 @@ From: nvidia/cuda:11.7.1-cudnn8-devel-ubuntu22.04
         wget \
         pkg-config \
         tzdata \
-        ninja-build  # <--- REQUIRED for flash-attn compilation
+        ninja-build
 
     # Link python3 to python for convenience
     ln -s /usr/bin/python3 /usr/bin/python
@@ -32,12 +33,12 @@ From: nvidia/cuda:11.7.1-cudnn8-devel-ubuntu22.04
     # 2. Python Environment Setup
     pip3 install --upgrade pip setuptools wheel packaging
 
-    # 3. CRITICAL: Patch pyproject.toml to allow Python 3.10
+    # 3. Patch pyproject.toml to allow Python 3.10
     sed -i 's/requires-python = ">=3.11"/requires-python = ">=3.10"/g' /transcriptomic-fms/pyproject.toml
     sed -i "s/requires-python = '>=3.11'/requires-python = '>=3.10'/g" /transcriptomic-fms/pyproject.toml
 
     # 4. Install PyTorch + TorchText (Strictly Pinned)
-    # We added torchtext==0.14.1 here. This is the ONLY version compatible with Torch 1.13.1.
+    # We install these first to establish the base "Golden Triangle" of versions.
     pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 torchtext==0.14.1 \
         --extra-index-url https://download.pytorch.org/whl/cu117
 
@@ -45,11 +46,13 @@ From: nvidia/cuda:11.7.1-cudnn8-devel-ubuntu22.04
     pip install pyarrow
 
     # 6. Install Flash Attention
-    # ninja-build (installed in apt step) is required for this to succeed
+    # We use --no-build-isolation to force it to use our existing PyTorch
     pip install "flash-attn<1.0.5" --no-build-isolation
 
-    # 7. Install scGPT
-    pip install scgpt "orbax<0.1.8"
+    # 7. Install scGPT (CRITICAL FIX HERE)
+    # We RE-PIN torchtext==0.14.1 here.
+    # Without this, pip sees scgpt needs torchtext and upgrades it to the latest version, breaking everything.
+    pip install scgpt "orbax<0.1.8" torchtext==0.14.1
 
     # 8. Install additional dependencies
     pip install markupsafe==2.0.1
@@ -68,6 +71,10 @@ From: nvidia/cuda:11.7.1-cudnn8-devel-ubuntu22.04
     mkdir -p /transcriptomic-fms/data
     mkdir -p /transcriptomic-fms/output
     mkdir -p /transcriptomic-fms/models
+    
+    # 12. DEBUG: Verify versions
+    echo "=== FINAL VERSION CHECK ==="
+    pip list | grep -E "torch|scgpt|flash-attn"
 
 %environment
     export LC_ALL=C.UTF-8
