@@ -490,7 +490,12 @@ class GeneformerModel(BaseEmbeddingModel):
                 )
 
             # Initialize tokenizer
-            tokenizer_kwargs = {"nproc": 4}  # Default number of processes
+            # V1-10M model settings: special_token=False, model_input_size=2048
+            tokenizer_kwargs = {
+                "nproc": 4,  # Default number of processes
+                "special_token": False,  # V1 models don't use special tokens
+                "model_input_size": 2048,  # V1 model input size
+            }
 
             if self.token_dict_file:
                 tokenizer_kwargs["token_dictionary_file"] = str(self.token_dict_file)
