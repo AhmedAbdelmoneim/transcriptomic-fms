@@ -46,9 +46,15 @@ From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
     # 5. Install Geneformer dependencies
     pip install "loompy" "datasets" "transformers" "tokenizers"
 
-    # 6. Install Geneformer
-    # Note: Geneformer may need to be installed from source or HuggingFace
-    pip install geneformer || pip install git+https://github.com/jkobject/geneformer.git
+    # 6. Install Geneformer from HuggingFace (official source)
+    # Note: This installs the package only, model files are downloaded separately via auto-download
+    # Use --filter=blob:none to skip LFS files during clone (we only need Python package, not model files)
+    cd /tmp && \
+    git clone --filter=blob:none --depth 1 https://huggingface.co/ctheodoris/Geneformer geneformer-pkg && \
+    cd geneformer-pkg && \
+    pip install . && \
+    cd / && \
+    rm -rf /tmp/geneformer-pkg
 
     # 7. Install Project Dependencies
     pip install "ipython" "jupyterlab" "matplotlib" "notebook" "python-dotenv" "ruff"
