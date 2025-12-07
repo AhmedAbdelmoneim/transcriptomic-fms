@@ -553,6 +553,34 @@ class GeneformerModel(BaseEmbeddingModel):
             logger.info("Tokenizing data for Geneformer...")
             tokenized_data_dir = self._tokenize_data(adata, tokenized_dir)
 
+            # The tokenizer creates a .dataset directory (HuggingFace Dataset format)
+            # The output is: {output_dir}/{output_prefix}.dataset/
+            # Check what was actually created
+            tokenized_contents = list(tokenized_data_dir.iterdir())
+            logger.info(f"Tokenized output contents: {[str(p.name) for p in tokenized_contents]}")
+            
+            # Look for .dataset directory - this is what extract_embs expects
+            dataset_dirs = [d for d in tokenized_contents if d.is_dir() and d.name.endswith(".dataset")]
+            if dataset_dirs:
+                # Found .dataset directory - extract_embs expects the path to this directory
+                dataset_dir = dataset_dirs[0]
+                logger.info(f"Found dataset directory: {dataset_dir}")
+                input_data_path = str(dataset_dir)  # Path to the .dataset directory itself
+            else:
+                # Check if tokenized_data_dir itself is structured as a dataset
+                # Or look for any subdirectory
+                if any(d.is_dir() for d in tokenized_contents):
+                    # Try using the first subdirectory
+                    dataset_dir = [d for d in tokenized_contents if d.is_dir()][0]
+                    logger.info(f"Using subdirectory as dataset: {dataset_dir}")
+                    input_data_path = str(dataset_dir)
+                else:
+                    raise RuntimeError(
+                        f"Tokenized dataset not found in expected format. "
+                        f"Contents of {tokenized_data_dir}: {[str(p.name) for p in tokenized_contents]}. "
+                        "Expected a .dataset directory or dataset structure."
+                    )
+
             # Get extractor
             extractor = self._get_extractor()
 
@@ -564,11 +592,12 @@ class GeneformerModel(BaseEmbeddingModel):
             actual_model_dir = self._find_actual_model_dir()
 
             # Extract embeddings
+            # extract_embs expects input_data_file to be a directory containing the dataset
             logger.info("Extracting embeddings with Geneformer...")
             with tempfile.TemporaryDirectory() as emb_output_dir:
                 extractor.extract_embs(
                     model_directory=str(actual_model_dir),
-                    input_data_file=str(tokenized_data_dir),
+                    input_data_file=input_data_path,  # Directory containing the dataset
                     output_directory=emb_output_dir,
                     output_prefix="embeddings",
                     output_torch_embs=False,  # We'll load from CSV
