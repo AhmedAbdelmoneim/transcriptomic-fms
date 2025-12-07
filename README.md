@@ -15,6 +15,10 @@ make requirements
 make install-model MODEL=scgpt
 # or
 uv sync --extra scgpt
+
+# On HPC clusters (Compute Canada), load CUDA module before installing scgpt:
+# module load cuda/11.7  # or appropriate CUDA version
+# make install-model MODEL=scgpt
 ```
 
 ### List Available Models
@@ -36,23 +40,37 @@ make embed MODEL=pca INPUT=data/test.h5ad OUTPUT=output/embeddings.npy \
 
 ### Generate Embeddings on HPC
 
-1. **Set up HPC environment** (one-time):
+1. **Build model container** (for scgpt, etc.):
 ```bash
-make setup-hpc
+module load apptainer
+make build-container MODEL=scgpt
 ```
 
-2. **Submit a job**:
+2. **Run interactively** (for testing/debugging):
+```bash
+# First, get an interactive GPU node
+salloc --time=4:00:00 --nodes=1 --cpus-per-task=8 --mem=64G \
+    --account=def-jagillis --gres=gpu:1
+
+# Once you have the node, run:
+make hpc-embed-interactive MODEL=scgpt \
+    INPUT=data/test.h5ad \
+    OUTPUT=output/embeddings.npy \
+    MODEL_ARGS="--device cuda"
+```
+
+3. **Submit a batch job** (for production):
 ```bash
 # Using Makefile
-make hpc-embed MODEL=pca INPUT=data/test.h5ad OUTPUT=output/embeddings.npy \
-    MODEL_ARGS="--n-components 100"
+make hpc-embed MODEL=scgpt INPUT=data/test.h5ad OUTPUT=output/embeddings.npy \
+    MODEL_ARGS="--device cuda"
 
 # Or directly with sbatch
 sbatch transcriptomic_fms/hpc/run_job.sh embed \
-    --model pca \
+    --model scgpt \
     --input data/test.h5ad \
     --output output/embeddings.npy \
-    --n-components 100
+    --device cuda
 ```
 
 ## Architecture

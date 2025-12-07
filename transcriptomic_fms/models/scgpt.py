@@ -81,10 +81,28 @@ class SCGPTModel(BaseEmbeddingModel):
         self.auto_download = auto_download
 
         # Auto-detect device
+        # Check both that CUDA is available AND that devices are accessible
+        # (device_count() can be 0 even if CUDA libraries are installed)
+        cuda_available = torch.cuda.is_available() and torch.cuda.device_count() > 0
+
         if device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.device = "cuda" if cuda_available else "cpu"
         else:
-            self.device = device
+            # User specified a device - validate it
+            if device == "cuda" and not cuda_available:
+                import warnings
+
+                warnings.warn(
+                    "CUDA requested but no CUDA devices available. "
+                    f"torch.cuda.is_available()={torch.cuda.is_available()}, "
+                    f"torch.cuda.device_count()={torch.cuda.device_count()}. "
+                    "Falling back to CPU.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                self.device = "cpu"
+            else:
+                self.device = device
 
         # Determine model directory
         if model_dir:
@@ -129,7 +147,9 @@ class SCGPTModel(BaseEmbeddingModel):
                         f"Set auto_download=True to download automatically."
                     )
             else:
-                print(f"Using scGPT model from: {self.model_dir}")
+                import sys
+
+                print(f"Using scGPT model from: {self.model_dir}", file=sys.stderr)
 
     def preprocess(self, adata: sc.AnnData, output_path: Optional[Path] = None) -> sc.AnnData:
         """
@@ -262,6 +282,21 @@ class SCGPTModel(BaseEmbeddingModel):
         print(f"Source: {SCGPT_MODEL_URL}")
 
         try:
+            # Set SSL certificate path for gdown (Ubuntu/Debian locations)
+            import os
+            import ssl
+
+            cert_paths = [
+                "/etc/ssl/certs/ca-certificates.crt",
+                "/etc/ssl/certs/ca-bundle.crt",
+                "/usr/lib/ssl/certs/ca-certificates.crt",
+            ]
+            for cert_path in cert_paths:
+                if os.path.exists(cert_path):
+                    os.environ.setdefault("REQUESTS_CA_BUNDLE", cert_path)
+                    os.environ.setdefault("SSL_CERT_FILE", cert_path)
+                    break
+
             gdown.download_folder(
                 SCGPT_MODEL_URL,
                 output=str(self.model_dir),

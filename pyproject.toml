@@ -32,16 +32,17 @@ dependencies = [
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
-scgpt = [
-    "scgpt",
-    "torch<=2.2.2",
-    "numpy<2",
-    "gdown",
-]
+# Note: Model-specific dependencies are installed in their respective containers
+# to avoid conflicts. For local development, install manually:
+# pip install scgpt "torch<=2.2.2" "numpy<2" gdown ...
 
 [project.scripts]
 transcriptomic-fms = "transcriptomic_fms.cli.main:main"
 
+
+
+[tool.uv.extra-build-dependencies]
+flash-attn = ["torch", "numpy"]
 
 [tool.ruff]
 line-length = 99

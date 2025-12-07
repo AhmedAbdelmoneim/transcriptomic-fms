@@ -68,20 +68,18 @@ for arg in "$@"; do
 done
 
 # Determine which container to use
-# Check for model-specific container first, fall back to base container
 if [ -n "$MODEL_NAME" ]; then
     MODEL_CONTAINER="$PROJ_ROOT/transcriptomic-fms-${MODEL_NAME}.sif"
     if [ -f "$MODEL_CONTAINER" ]; then
         export APPTAINER_IMAGE="$MODEL_CONTAINER"
-        echo "Using model-specific container: $APPTAINER_IMAGE"
+        echo "Using container: $APPTAINER_IMAGE"
     else
-        echo "Model-specific container not found: $MODEL_CONTAINER"
-        echo "Falling back to base container"
-        export APPTAINER_IMAGE="${APPTAINER_IMAGE:-$PROJ_ROOT/transcriptomic-fms.sif}"
+        echo "Error: Container not found: $MODEL_CONTAINER"
+        export APPTAINER_IMAGE=""
     fi
 else
-    # No model specified, use base container
-    export APPTAINER_IMAGE="${APPTAINER_IMAGE:-$PROJ_ROOT/transcriptomic-fms.sif}"
+    echo "Error: Model name required but not found in arguments"
+    export APPTAINER_IMAGE=""
 fi
 
 export DATA_DIR="${DATA_DIR:-$PROJ_ROOT/data}"
@@ -101,16 +99,15 @@ if [ ! -f "$APPTAINER_IMAGE" ]; then
     if [ -n "$MODEL_NAME" ]; then
         echo "Model: $MODEL_NAME"
         echo ""
-        echo "To build model-specific container:"
-        echo "  make build-model-container MODEL=$MODEL_NAME"
+        echo "To build container:"
+        echo "  make build-container MODEL=$MODEL_NAME"
     fi
     echo ""
     echo "Please ensure:"
-    echo "  1. You've run ./transcriptomic_fms/hpc/setup_hpc.sh to build the base container"
     if [ -n "$MODEL_NAME" ]; then
-        echo "  2. You've run 'make build-model-container MODEL=$MODEL_NAME' to build model container"
+        echo "  1. You've run 'make build-container MODEL=$MODEL_NAME' to build the container"
     fi
-    echo "  3. The container image exists at: $APPTAINER_IMAGE"
+    echo "  2. The container image exists at: $APPTAINER_IMAGE"
     echo "  4. You're submitting the job from the project root directory"
     echo ""
     echo "If the image is in a different location, set APPTAINER_IMAGE environment variable:"
