@@ -141,16 +141,53 @@ class SCimilarityModel(BaseEmbeddingModel):
 
         # Initialize model (will be done lazily in embed() if needed)
         self._model: Optional[CellEmbedding] = None
+        # Store the actual model directory (may be in a subdirectory like model_v1.1)
+        self._actual_model_path: Optional[Path] = None
+
+    def _find_actual_model_path(self) -> Path:
+        """
+        Find the actual model directory.
+        
+        The model may be in a subdirectory (e.g., model_v1.1) after extraction.
+        This method searches for the actual model directory containing gene_order.tsv.
+        
+        Returns:
+            Path to the actual model directory
+            
+        Raises:
+            ValueError: If model directory cannot be found
+        """
+        if self.model_path is None:
+            raise ValueError(
+                "model_path must be provided. Set it in model initialization, "
+                "via --model-path argument, or enable auto_download."
+            )
+        
+        # Check if model_path itself contains gene_order.tsv
+        if (self.model_path / "gene_order.tsv").exists():
+            return self.model_path
+        
+        # Look for subdirectories that might contain the model
+        # Common patterns: model_v1.1, model, v1.1, etc.
+        for item in self.model_path.iterdir():
+            if item.is_dir():
+                # Check if this subdirectory contains gene_order.tsv
+                if (item / "gene_order.tsv").exists():
+                    return item
+        
+        # If not found, raise an error
+        raise ValueError(
+            f"Model files not found in {self.model_path} or its subdirectories. "
+            f"Expected to find gene_order.tsv file. "
+            f"Please ensure the model is extracted correctly."
+        )
 
     def _get_model(self) -> CellEmbedding:
         """Get or initialize the CellEmbedding model."""
         if self._model is None:
-            if self.model_path is None:
-                raise ValueError(
-                    "model_path must be provided. Set it in model initialization, "
-                    "via --model-path argument, or enable auto_download."
-                )
-            self._model = CellEmbedding(model_path=str(self.model_path), use_gpu=self.use_gpu)
+            if self._actual_model_path is None:
+                self._actual_model_path = self._find_actual_model_path()
+            self._model = CellEmbedding(model_path=str(self._actual_model_path), use_gpu=self.use_gpu)
         return self._model
 
     def preprocess(self, adata: sc.AnnData, output_path: Optional[Path] = None) -> sc.AnnData:
@@ -174,6 +211,11 @@ class SCimilarityModel(BaseEmbeddingModel):
         """
         adata = adata.copy()
 
+        # Get the actual model path first (to access gene_order)
+        # We need to find the actual model directory before initializing the model
+        if self._actual_model_path is None:
+            self._actual_model_path = self._find_actual_model_path()
+        
         # Get the model to access gene_order
         model = self._get_model()
 
@@ -252,25 +294,17 @@ class SCimilarityModel(BaseEmbeddingModel):
         if not self.model_path or not self.model_path.exists():
             return False
 
-        # SCimilarity model directory should contain model files
-        # Check for common model file patterns
-        # The exact structure depends on the model version, but typically includes:
-        # - model files (could be .pt, .pth, or other formats)
-        # - config files
-        # We'll check if the directory is not empty and contains some model-related files
-        model_files = list(self.model_path.glob("*"))
-        if len(model_files) == 0:
-            return False
-
-        # Check for common model file extensions or names
-        model_extensions = [".pt", ".pth", ".pkl", ".h5", ".hdf5"]
-        has_model_file = any(f.suffix in model_extensions for f in model_files)
+        # Check if model_path itself contains gene_order.tsv (the key file)
+        if (self.model_path / "gene_order.tsv").exists():
+            return True
         
-        # Also check for common model directory structure
-        # SCimilarity models might have subdirectories
-        has_subdirs = any(f.is_dir() for f in model_files)
+        # Look for subdirectories that contain the model
+        # The model is typically in a subdirectory like model_v1.1 after extraction
+        for item in self.model_path.iterdir():
+            if item.is_dir() and (item / "gene_order.tsv").exists():
+                return True
         
-        return has_model_file or has_subdirs
+        return False
 
     def _download_model(self) -> None:
         """Download SCimilarity model from Zenodo."""
@@ -337,10 +371,18 @@ class SCimilarityModel(BaseEmbeddingModel):
             if not self._model_exists():
                 raise RuntimeError(
                     "Model extraction completed but model files are missing. "
-                    f"Expected model files in {self.model_path}"
+                    f"Expected to find gene_order.tsv in {self.model_path} or its subdirectories."
                 )
 
-            print(f"Model downloaded and extracted successfully to {self.model_path}")
+            # Find and report the actual model path
+            try:
+                actual_path = self._find_actual_model_path()
+                print(f"Model downloaded and extracted successfully.")
+                print(f"Model directory: {self.model_path}")
+                print(f"Actual model path: {actual_path}")
+            except ValueError:
+                # This shouldn't happen if _model_exists() returned True, but handle gracefully
+                print(f"Model downloaded and extracted to {self.model_path}")
         except Exception as e:
             raise RuntimeError(
                 f"Failed to download SCimilarity model: {e}\n"
