@@ -39,6 +39,10 @@ scimilarity = [
     "scimilarity",
     "requests",
 ]
+geneformer = [
+    "geneformer @ git+https://huggingface.co/ctheodoris/Geneformer",
+    "loompy",
+]
 
 [project.scripts]
 transcriptomic-fms = "transcriptomic_fms.cli.main:main"

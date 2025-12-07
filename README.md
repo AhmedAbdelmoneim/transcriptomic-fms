@@ -126,6 +126,36 @@ make embed MODEL=scimilarity INPUT=data/test.h5ad OUTPUT=output/embeddings.npy \
 
 **Note:** SCimilarity expects raw counts (not log-normalized). The model will automatically log-normalize during preprocessing.
 
+### Geneformer
+
+Geneformer foundation transformer model for single-cell embeddings (V1-10M, cell embeddings).
+
+**Installation:**
+```bash
+make install-model MODEL=geneformer
+```
+
+**Arguments:**
+- `--model-path <path>`: Path to Geneformer model directory (auto-downloads if not provided)
+- `--batch-size <int>`: Batch size for forward pass (default: 100)
+- `--device <str>`: 'cuda' or 'cpu' (auto-detects if not specified)
+
+**Examples:**
+```bash
+# Auto-download model (requires git-lfs)
+make embed MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/embeddings.npy
+
+# Use existing model
+make embed MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/embeddings.npy \
+    MODEL_ARGS="--model-path /path/to/Geneformer"
+```
+
+**Note:** 
+- Geneformer requires Ensembl IDs (not gene symbols) in `var.index` or `var['ensembl_id']` column
+- Data should be raw counts with `n_counts` attribute per cell (computed automatically if missing)
+- Tokenization creates intermediate .dataset files automatically
+- Model auto-download requires git-lfs to be installed
+
 ## HPC Deployment
 
 ### Building Containers
@@ -134,6 +164,7 @@ make embed MODEL=scimilarity INPUT=data/test.h5ad OUTPUT=output/embeddings.npy \
 module load apptainer
 make build-container MODEL=scgpt
 make build-container MODEL=scimilarity
+make build-container MODEL=geneformer
 ```
 
 ### Container Updates
@@ -155,11 +186,9 @@ sbatch --time=8:00:00 --mem=128G transcriptomic_fms/hpc/run_job.sh embed ...
 
 ## Data Requirements
 
-All models require AnnData objects (`.h5ad` files) with gene symbols available in one of:
-- `var.index` (most common)
-- `var['gene_symbols']` column
-- `var['feature_name']` column
-- `var['gene_name']` column
+All models require AnnData objects (`.h5ad` files) with gene identifiers:
+- **Most models**: Gene symbols in `var.index`, `var['gene_symbols']`, `var['feature_name']`, or `var['gene_name']`
+- **Geneformer**: Requires Ensembl IDs in `var.index` or `var['ensembl_id']` column
 
 ## Architecture
 
