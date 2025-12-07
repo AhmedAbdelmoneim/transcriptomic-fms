@@ -17,10 +17,15 @@ from transcriptomic_fms.utils.logging import get_logger
 logger = get_logger(__name__)
 
 try:
-    from geneformer import EmbExtractor
-    from geneformer.tokenizer import TOKEN_DICTIONARY_FILE
+    from geneformer import EmbExtractor, TranscriptomeTokenizer
+
+    try:
+        from geneformer.tokenizer import TOKEN_DICTIONARY_FILE
+    except ImportError:
+        TOKEN_DICTIONARY_FILE = None
 except ImportError:
     EmbExtractor = None
+    TranscriptomeTokenizer = None
     TOKEN_DICTIONARY_FILE = None
 
 try:
@@ -478,24 +483,36 @@ class GeneformerModel(BaseEmbeddingModel):
             loompy.create(str(tmp_loom), X_dense.T, row_attrs, col_attrs)
 
             # Tokenize using geneformer tokenizer
-            try:
-                from geneformer.tokenizer import tokenize_data
-            except ImportError:
-                # Try alternative import
-                from geneformer import tokenize_data
+            if TranscriptomeTokenizer is None:
+                raise ImportError(
+                    "TranscriptomeTokenizer not available. "
+                    "Ensure geneformer is properly installed."
+                )
 
-            tokenize_kwargs = {
-                "input_file": str(tmp_loom),
-                "output_directory": str(output_dir),
-                "nproc": 4,  # Default
-            }
+            # Initialize tokenizer
+            tokenizer_kwargs = {"nproc": 4}  # Default number of processes
 
             if self.token_dict_file:
-                tokenize_kwargs["token_dictionary_file"] = str(self.token_dict_file)
+                tokenizer_kwargs["token_dictionary_file"] = str(self.token_dict_file)
             if self.median_dict_file:
-                tokenize_kwargs["gene_median_file"] = str(self.median_dict_file)
+                tokenizer_kwargs["gene_median_file"] = str(self.median_dict_file)
 
-            tokenize_data(**tokenize_kwargs)
+            tokenizer = TranscriptomeTokenizer(**tokenizer_kwargs)
+
+            # Tokenize the data
+            # tokenize_data expects a directory containing input files
+            # Create a temporary input directory with the loom file
+            import shutil
+
+            input_dir = Path(tmpdir) / "input_data"
+            input_dir.mkdir(exist_ok=True)
+            shutil.copy(str(tmp_loom), str(input_dir / "data.loom"))
+
+            tokenizer.tokenize_data(
+                input_data_path=str(input_dir),
+                output_directory=str(output_dir),
+                output_prefix="tokenized",
+            )
 
         return output_dir
 
