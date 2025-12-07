@@ -225,6 +225,11 @@ class SCimilarityModel(BaseEmbeddingModel):
         # Store original gene names if needed
         if "feature_name" not in adata.var.columns:
             adata.var["feature_name"] = gene_symbols
+
+        # Log-normalize counts (SCimilarity expects log-normalized data)
+        # Store raw counts in layers if not already there
+        if "counts" not in adata.layers:
+            adata.layers["counts"] = adata.X.copy()
         
         # Set var_names to uppercase gene symbols (SCimilarity expects uppercase)
         adata.var_names = [g.upper() for g in gene_symbols]
@@ -234,11 +239,6 @@ class SCimilarityModel(BaseEmbeddingModel):
 
         # Align dataset to model's gene order
         adata = align_dataset(adata, model.gene_order)
-
-        # Log-normalize counts (SCimilarity expects log-normalized data)
-        # Store raw counts in layers if not already there
-        if "counts" not in adata.layers:
-            adata.layers["counts"] = adata.X.copy()
         
         # Log-normalize
         adata = lognorm_counts(adata)
