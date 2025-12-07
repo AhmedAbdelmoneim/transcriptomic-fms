@@ -250,47 +250,6 @@ class SCimilarityModel(BaseEmbeddingModel):
 
         return adata
 
-    def _get_gene_symbols(self, adata: sc.AnnData) -> list[str]:
-        """
-        Extract gene symbols from AnnData.
-
-        Checks in order:
-        1. var['gene_symbols'] column
-        2. var['feature_name'] column
-        3. var['gene_name'] column
-        4. var.index (assumes index contains gene symbols)
-
-        Returns:
-            List of gene symbols
-
-        Raises:
-            ValueError: If gene symbols cannot be determined
-        """
-        # Check for gene_symbols column
-        if "gene_symbols" in adata.var.columns:
-            return adata.var["gene_symbols"].tolist()
-
-        # Check for feature_name column (common in some formats)
-        if "feature_name" in adata.var.columns:
-            return adata.var["feature_name"].tolist()
-
-        # Check for gene_name column (common alternative)
-        if "gene_name" in adata.var.columns:
-            return adata.var["gene_name"].tolist()
-
-        # Use index as gene symbols
-        if adata.var_names is not None and len(adata.var_names) > 0:
-            return adata.var_names.tolist()
-
-        raise ValueError(
-            "Cannot determine gene symbols. "
-            "Please ensure one of the following:\n"
-            "  - var.index contains gene symbols\n"
-            "  - var['gene_symbols'] column exists\n"
-            "  - var['feature_name'] column exists\n"
-            "  - var['gene_name'] column exists"
-        )
-
     def _model_exists(self) -> bool:
         """Check if model files exist in model directory."""
         if not self.model_path or not self.model_path.exists():

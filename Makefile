@@ -234,13 +234,13 @@ install-model:
 ## Format code
 .PHONY: format
 format:
-	$(UV) run ruff format transcriptomic_fms
-	$(UV) run ruff format pyproject.toml
+	@$(UV) run --preview-features extra-build-dependencies ruff format transcriptomic_fms 2>&1 | grep -v "warning.*extra-build-dependencies.*experimental" || true
+	@$(UV) run --preview-features extra-build-dependencies ruff format pyproject.toml 2>&1 | grep -v "warning.*extra-build-dependencies.*experimental" || true
 
 ## Lint code
 .PHONY: lint
 lint:
-	$(UV) run ruff check transcriptomic_fms
+	@$(UV) run --preview-features extra-build-dependencies ruff check transcriptomic_fms 2>&1 | grep -v "warning.*extra-build-dependencies.*experimental" || true
 
 ## Run both format and lint
 .PHONY: check
