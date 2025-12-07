@@ -89,74 +89,62 @@ From: nvidia/cuda:12.1.0-devel-ubuntu22.04
     }
     echo "PyTorch installed successfully"
 
-    # CRITICAL: Install numpy<2 FIRST and lock it in
-    echo "Installing numpy<2 (must be first)..."
+    # Following PROVEN working installation method from scGPT community
+    # Key: numpy<1.24 FIRST (even stricter than <2.0)
+    echo "Installing numpy<1.24 (proven working version for scGPT)..."
     /root/.local/bin/uv pip install --system \
         --preview-features extra-build-dependencies \
-        "numpy<2"
+        --upgrade "numpy<1.24"
     
     # Verify numpy version
-    python -c "import numpy; assert int(numpy.__version__.split('.')[0]) < 2, f'ERROR: numpy {numpy.__version__} is >= 2.0'; print(f'numpy {numpy.__version__} installed')" || exit 1
+    python -c "import numpy; v = numpy.__version__; from packaging import version; assert version.parse(v) < version.parse('1.24'), f'ERROR: numpy {v} is >= 1.24'; print(f'✓ numpy {v} installed (< 1.24)')" || exit 1
     
-    # Install scGPT dependencies (without flash-attn first, to avoid numpy issues)
-    echo "Installing scGPT and dependencies..."
+    # Install flash-attn with --no-build-isolation (as per working example)
+    echo "Installing flash-attn with --no-build-isolation (proven method)..."
     /root/.local/bin/uv pip install --system \
         --preview-features extra-build-dependencies \
-        "scgpt" "torch<=2.2.2" "umap-learn<0.5.7" \
-        "wandb" "python-louvain" "gdown" || {
-        echo "ERROR: scGPT installation failed!"
-        exit 1
-    }
-    
-    # Install flash-attn separately and verify it works
-    echo "Installing flash-attn (required for scGPT)..."
-    /root/.local/bin/uv pip install --system \
-        --preview-features extra-build-dependencies \
-        "flash-attn<1.0.5" || {
+        --no-build-isolation \
+        "flash-attn==1.0.6" || {
         echo "ERROR: flash-attn installation failed! This is required."
         exit 1
     }
     
-    # Verify flash-attn installed and importable (flash_attn doesn't have __version__)
-    python -c "import flash_attn; print('✓ flash-attn installed and importable')" || {
-        echo "ERROR: flash-attn import failed after installation!"
+    # Verify flash-attn installed
+    python -c "import flash_attn; print('✓ flash-attn installed')" || {
+        echo "ERROR: flash-attn import failed!"
         exit 1
     }
     
-    # Install base package dependencies ONE BY ONE to catch numpy upgrades
+    # Install scGPT with --no-deps FIRST (as per working example)
+    echo "Installing scGPT with --no-deps (proven method)..."
+    /root/.local/bin/uv pip install --system \
+        --preview-features extra-build-dependencies \
+        --no-deps \
+        "scgpt" || {
+        echo "ERROR: scGPT installation failed!"
+        exit 1
+    }
+    
+    # Install scGPT dependencies with specific versions (as per working example)
+    echo "Installing scGPT dependencies (proven working versions)..."
+    /root/.local/bin/uv pip install --system \
+        --preview-features extra-build-dependencies \
+        "pandas" "scanpy" "wandb" "gdown" "python-louvain" "umap-learn<0.5.7" || {
+        echo "ERROR: scGPT dependencies installation failed!"
+        exit 1
+    }
+    
+    # Install base package dependencies (excluding numpy - already installed)
     echo "Installing base package dependencies..."
-    for pkg in "ipython" "jupyterlab" "matplotlib" "notebook" "python-dotenv" "ruff" "scanpy" "scikit-learn"; do
-        echo "Installing $pkg..."
-        /root/.local/bin/uv pip install --system \
-            --preview-features extra-build-dependencies \
-            "$pkg" || {
-            echo "ERROR: Failed to install $pkg"
-            exit 1
-        }
-        # Check numpy after each install
-        python -c "import numpy; v = numpy.__version__; assert int(v.split('.')[0]) < 2, f'numpy upgraded to {v} during {pkg} install'; print(f'  numpy {v} OK')" || {
-            echo "ERROR: numpy was upgraded! Forcing back to <2..."
-            /root/.local/bin/uv pip install --system \
-                --preview-features extra-build-dependencies \
-                "numpy<2"
-        }
-    done
-    
-    # Install pandas LAST (it might pull in numpy 2.x)
-    echo "Installing pandas (last, may try to upgrade numpy)..."
     /root/.local/bin/uv pip install --system \
         --preview-features extra-build-dependencies \
-        "pandas" || {
-        echo "ERROR: pandas installation failed!"
+        "ipython" "jupyterlab" "matplotlib" "notebook" "python-dotenv" "ruff" "scikit-learn" || {
+        echo "ERROR: Base dependencies installation failed!"
         exit 1
     }
-    # Force numpy<2 after pandas
-    /root/.local/bin/uv pip install --system \
-        --preview-features extra-build-dependencies \
-        "numpy<2"
     
-    # Install the package itself (no deps)
-    echo "Installing package in editable mode..."
+    # Install the package itself (no deps to avoid numpy upgrade)
+    echo "Installing package in editable mode (no deps)..."
     /root/.local/bin/uv pip install --system \
         --preview-features extra-build-dependencies \
         --no-deps \
@@ -165,11 +153,51 @@ From: nvidia/cuda:12.1.0-devel-ubuntu22.04
         exit 1
     }
     
-    # Final verification
-    python -c "import numpy; v = numpy.__version__; assert int(v.split('.')[0]) < 2, f'FINAL ERROR: numpy {v} is >= 2.0'; print(f'✓ FINAL: numpy {v} confirmed')" || {
-        echo "CRITICAL ERROR: numpy is >= 2.0 after all installations!"
+    # CRITICAL: Lock numpy<1.24 one final time
+    echo "Final numpy lock (numpy<1.24)..."
+    /root/.local/bin/uv pip install --system \
+        --preview-features extra-build-dependencies \
+        --force-reinstall \
+        "numpy<1.24" || {
+        echo "ERROR: Failed to lock numpy<1.24!"
         exit 1
     }
+    
+    # Final verification - BUILD FAILS if numpy >= 1.24
+    python << 'PYEOF'
+import numpy
+from packaging import version
+v = numpy.__version__
+if version.parse(v) >= version.parse('1.24'):
+    print(f"❌ CRITICAL ERROR: numpy {v} is >= 1.24")
+    print("Forcing downgrade to numpy 1.23.5...")
+    import subprocess
+    import sys
+    result = subprocess.run([
+        "/root/.local/bin/uv", "pip", "install", "--system",
+        "--preview-features", "extra-build-dependencies",
+        "--force-reinstall",
+        "numpy==1.23.5"
+    ], capture_output=True, text=True)
+    if result.returncode != 0:
+        print("EMERGENCY FIX FAILED!")
+        print(result.stderr)
+        sys.exit(1)
+    import importlib
+    importlib.reload(numpy)
+    v2 = numpy.__version__
+    if version.parse(v2) >= version.parse('1.24'):
+        print(f"STILL FAILED: numpy {v2} is >= 1.24")
+        sys.exit(1)
+    print(f"✓ Emergency fix: numpy {v2}")
+else:
+    print(f"✓ FINAL: numpy {v} (< 1.24 - OK)")
+PYEOF
+
+    if [ $? -ne 0 ]; then
+        echo "CRITICAL BUILD FAILURE: NumPy must be < 1.24 for scGPT"
+        exit 1
+    fi
     
     # Rebuild h5py from source to ensure it links against the installed HDF5 version
     # h5py wheels may be built against a different HDF5 version than what's in the container
