@@ -13,7 +13,6 @@ From: nvidia/cuda:11.7.1-cudnn8-devel-ubuntu22.04
 
 %post
     # 1. System Dependency Installation
-    # We need r-base because scGPT has R dependencies (rpy2)
     export DEBIAN_FRONTEND=noninteractive
     apt-get update && apt-get install -y \
         python3 \
@@ -31,44 +30,50 @@ From: nvidia/cuda:11.7.1-cudnn8-devel-ubuntu22.04
 
     # 2. Python Environment Setup
     # Upgrade pip to handle modern wheels
-    pip3 install --upgrade pip setuptools wheel
+    pip3 install --upgrade pip setuptools wheel packaging
 
-    # 3. Install PyTorch (CUDA 11.7 specific)
+    # 3. CRITICAL: Patch pyproject.toml to allow Python 3.10
+    # scGPT requires Torch 1.13, which does NOT support Python 3.11.
+    # We edit the requirement in the container copy only.
+    sed -i 's/requires-python = ">=3.11"/requires-python = ">=3.10"/g' /transcriptomic-fms/pyproject.toml
+    
+    # Also patch if it uses single quotes
+    sed -i "s/requires-python = '>=3.11'/requires-python = '>=3.10'/g" /transcriptomic-fms/pyproject.toml
+
+    # 4. Install PyTorch (CUDA 11.7 specific)
     # scGPT works best with Torch 1.13.1 when using the recommended older flash-attn.
-    # We install this BEFORE scgpt to prevent it from pulling a CPU version.
     pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 \
         --extra-index-url https://download.pytorch.org/whl/cu117
 
-    # 4. Install PyArrow explicitly
-    # Installing this via pip in a fresh container avoids the common "snappy codec"
-    # and "ABI mismatch" errors seen in Conda/System envs.
+    # 5. Install PyArrow explicitly
     pip install pyarrow
 
-    # 5. Install Flash Attention (The difficult dependency)
+    # 6. Install Flash Attention (The difficult dependency)
     # The README recommends <1.0.5 for stability with this CUDA version.
     # We enable build isolation to ensure it links against our fresh PyTorch.
     pip install "flash-attn<1.0.5" --no-build-isolation
 
-    # 6. Install scGPT
-    # We constrain orbax as noted in their installation issues.
-    pip install packaging
+    # 7. Install scGPT
     pip install scgpt "orbax<0.1.8"
 
-    # 7. Install additional dependencies
+    # 8. Install additional dependencies
     pip install markupsafe==2.0.1
     pip install wandb
     pip install pyro-ppl==1.8.6
 
-    # 8. Install project-specific dependencies
+    # 9. Install project-specific dependencies
+    # We exclude your project itself here, just installing libraries
     pip install "pandas" "scanpy" "gdown" "python-louvain" "umap-learn<0.5.7"
     pip install "ipython" "jupyterlab" "matplotlib" "notebook" "python-dotenv" "ruff" "scikit-learn"
 
-    # 9. Set working directory and install our package
-    # Use --no-deps to prevent pip from upgrading any packages we've carefully pinned
+    # 10. Set working directory and install our package
     cd /transcriptomic-fms
-    pip install --no-deps -e .
+    
+    # We use --no-deps to ensure we don't accidentally upgrade Torch/FlashAttn
+    # We use --ignore-requires-python as a double-safety against the version check
+    pip install --no-deps --ignore-requires-python -e .
 
-    # 10. Create data and output directories
+    # 11. Create data and output directories
     mkdir -p /transcriptomic-fms/data
     mkdir -p /transcriptomic-fms/output
     mkdir -p /transcriptomic-fms/models
