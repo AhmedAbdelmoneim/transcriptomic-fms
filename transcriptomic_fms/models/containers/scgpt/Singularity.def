@@ -99,6 +99,15 @@ From: nvidia/cuda:12.1.0-devel-ubuntu22.04
     # Verify numpy version (simple check: major.minor must be < 1.24)
     python -c "import numpy; v = numpy.__version__; parts = v.split('.'); major, minor = int(parts[0]), int(parts[1]); assert major < 1 or (major == 1 and minor < 24), f'ERROR: numpy {v} is >= 1.24'; print(f'✓ numpy {v} installed (< 1.24)')" || exit 1
     
+    # Install packaging first (required for flash-attn build)
+    echo "Installing packaging (required for flash-attn build)..."
+    /root/.local/bin/uv pip install --system \
+        --preview-features extra-build-dependencies \
+        "packaging" || {
+        echo "ERROR: packaging installation failed!"
+        exit 1
+    }
+    
     # Install flash-attn with --no-build-isolation (as per working example)
     echo "Installing flash-attn with --no-build-isolation (proven method)..."
     /root/.local/bin/uv pip install --system \
