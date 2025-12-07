@@ -120,6 +120,106 @@ hpc-embed-interactive:
 		--output $(OUTPUT) \
 		$(MODEL_ARGS)
 
+## Check GPU compatibility and availability
+## Usage: make check-gpu MODEL=<model_name>
+## This checks GPU access both on host and inside container
+.PHONY: check-gpu
+check-gpu:
+	@if [ -z "$(MODEL)" ]; then \
+		echo "Usage: make check-gpu MODEL=<model_name>"; \
+		echo ""; \
+		echo "Example: make check-gpu MODEL=scgpt"; \
+		exit 1; \
+	fi
+	@MODEL_NAME="$(MODEL)"; \
+	CONTAINER="transcriptomic-fms-$$MODEL_NAME.sif"; \
+	if [ ! -f "$$CONTAINER" ]; then \
+		echo "Error: Container not found: $$CONTAINER"; \
+		echo "Build it with: make build-container MODEL=$$MODEL_NAME"; \
+		exit 1; \
+	fi
+	@echo "========================================="; \
+	echo "GPU Compatibility Diagnostics"; \
+	echo "========================================="; \
+	echo ""; \
+	echo "1. HOST SYSTEM GPU CHECK:"; \
+	echo "------------------------"; \
+	if command -v nvidia-smi &> /dev/null; then \
+		echo "✓ nvidia-smi available"; \
+		echo ""; \
+		echo "GPU Information:"; \
+		nvidia-smi --query-gpu=index,name,driver_version,memory.total,cuda_version --format=csv,noheader || echo "  (nvidia-smi failed)"; \
+		echo ""; \
+		echo "CUDA_VISIBLE_DEVICES: $${CUDA_VISIBLE_DEVICES:-not set}"; \
+		echo "SLURM_GPUS_ON_NODE: $${SLURM_GPUS_ON_NODE:-not set}"; \
+		echo "SLURM_GPUS: $${SLURM_GPUS:-not set}"; \
+	else \
+		echo "✗ nvidia-smi not found (GPU drivers may not be available)"; \
+	fi; \
+	echo ""; \
+	echo "2. CONTAINER GPU ACCESS CHECK:"; \
+	echo "-----------------------------"; \
+	export PYTHONNOUSERSITE=1; \
+	export APPTAINER_USE_GPU=1; \
+	echo "Running diagnostics inside container..."; \
+	apptainer exec --nv "$$CONTAINER" python -c "\
+import sys; \
+import torch; \
+print('Python:', sys.version.split()[0]); \
+print('PyTorch version:', torch.__version__); \
+print(''); \
+print('CUDA available:', torch.cuda.is_available()); \
+print('CUDA device count:', torch.cuda.device_count()); \
+if torch.cuda.is_available(): \
+    print('CUDA version (PyTorch):', torch.version.cuda); \
+    for i in range(torch.cuda.device_count()): \
+        print(f'  Device {i}: {torch.cuda.get_device_name(i)}'); \
+        print(f'    Memory: {torch.cuda.get_device_properties(i).total_memory / 1e9:.1f} GB'); \
+else: \
+    print('⚠ WARNING: CUDA not available in container'); \
+    print(''); \
+    print('Troubleshooting:'); \
+    print('  1. Verify you have GPU allocation: salloc --gres=gpu:1 ...'); \
+    print('  2. Check CUDA_VISIBLE_DEVICES is set (should be visible above)'); \
+    print('  3. Verify --nv flag is working (this script uses it)'); \
+    print('  4. Check container CUDA version matches cluster drivers'); \
+"; \
+	echo ""; \
+	echo "3. CONTAINER CUDA LIBRARIES:"; \
+	echo "---------------------------"; \
+	apptainer exec --nv "$$CONTAINER" bash -c "\
+if [ -d /usr/local/cuda ]; then \
+    echo 'CUDA installation found: /usr/local/cuda'; \
+    if [ -f /usr/local/cuda/version.txt ]; then \
+        echo 'CUDA version (from container):'; \
+        cat /usr/local/cuda/version.txt; \
+    fi; \
+    echo ''; \
+    echo 'CUDA libraries:'; \
+    ls -lh /usr/local/cuda/lib64/libcuda*.so* 2>/dev/null | head -3 || echo '  (library check skipped)'; \
+else \
+    echo '⚠ CUDA directory not found in container'; \
+fi"; \
+	echo ""; \
+	echo "4. COMPATIBILITY CHECK:"; \
+	echo "----------------------"; \
+	apptainer exec --nv "$$CONTAINER" python -c "\
+import torch; \
+if torch.cuda.is_available() and torch.cuda.device_count() > 0: \
+    print('✓ GPU is accessible inside container'); \
+    print('✓ PyTorch can detect CUDA devices'); \
+    print('✓ Container setup appears correct'); \
+else: \
+    print('✗ GPU is NOT accessible inside container'); \
+    print(''); \
+    print('Possible issues:'); \
+    print('  - Container built with CUDA 11.7, but host driver may not support it'); \
+    print('  - --nv flag not properly exposing GPU to container'); \
+    print('  - CUDA_VISIBLE_DEVICES restriction'); \
+"; \
+	echo ""; \
+	echo "========================================="
+
 ## Run embedding job on HPC (requires SLURM)
 ## Usage: make hpc-embed MODEL=<model_name> INPUT=<path/to/input.h5ad> OUTPUT=<path/to/output.npy> [MODEL_ARGS="--arg1 value1 --arg2"]
 .PHONY: hpc-embed

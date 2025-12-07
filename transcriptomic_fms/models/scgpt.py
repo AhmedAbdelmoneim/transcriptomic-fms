@@ -81,10 +81,27 @@ class SCGPTModel(BaseEmbeddingModel):
         self.auto_download = auto_download
 
         # Auto-detect device
+        # Check both that CUDA is available AND that devices are accessible
+        # (device_count() can be 0 even if CUDA libraries are installed)
+        cuda_available = torch.cuda.is_available() and torch.cuda.device_count() > 0
+        
         if device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.device = "cuda" if cuda_available else "cpu"
         else:
-            self.device = device
+            # User specified a device - validate it
+            if device == "cuda" and not cuda_available:
+                import warnings
+                warnings.warn(
+                    "CUDA requested but no CUDA devices available. "
+                    f"torch.cuda.is_available()={torch.cuda.is_available()}, "
+                    f"torch.cuda.device_count()={torch.cuda.device_count()}. "
+                    "Falling back to CPU.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                self.device = "cpu"
+            else:
+                self.device = device
 
         # Determine model directory
         if model_dir:
