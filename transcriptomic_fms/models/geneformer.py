@@ -456,16 +456,24 @@ class GeneformerModel(BaseEmbeddingModel):
                 X_dense = adata.X
 
             # Create loom file
-            row_attrs = {"ensembl_id": gene_names}
+            # Ensure all attributes are numpy arrays
+            row_attrs = {"ensembl_id": np.array(gene_names)}
             col_attrs = {
-                "cell_id": cell_names,
-                "n_counts": adata.obs["n_counts"].values,
+                "cell_id": np.array(cell_names),
+                "n_counts": np.array(adata.obs["n_counts"].values),
             }
 
-            # Add any additional cell attributes
+            # Add any additional cell attributes (convert to numpy arrays)
             for col in adata.obs.columns:
                 if col not in col_attrs:
-                    col_attrs[col] = adata.obs[col].values
+                    values = adata.obs[col].values
+                    # Convert to numpy array, handling different types
+                    if not isinstance(values, np.ndarray):
+                        values = np.array(values)
+                    # Convert object arrays to strings if needed
+                    if values.dtype == object:
+                        values = values.astype(str)
+                    col_attrs[col] = values
 
             loompy.create(str(tmp_loom), X_dense.T, row_attrs, col_attrs)
 
