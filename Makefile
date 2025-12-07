@@ -148,7 +148,10 @@ check-gpu:
 		echo "✓ nvidia-smi available"; \
 		echo ""; \
 		echo "GPU Information:"; \
-		nvidia-smi --query-gpu=index,name,driver_version,memory.total,cuda_version --format=csv,noheader || echo "  (nvidia-smi failed)"; \
+		nvidia-smi --query-gpu=index,name,driver_version,memory.total --format=csv,noheader 2>/dev/null || nvidia-smi --query-gpu=index,name,driver_version,memory.total --format=csv || echo "  (nvidia-smi query failed)"; \
+		echo ""; \
+		echo "Full GPU status:"; \
+		nvidia-smi 2>/dev/null | head -15 || echo "  (nvidia-smi failed)"; \
 		echo ""; \
 		echo "CUDA_VISIBLE_DEVICES: $${CUDA_VISIBLE_DEVICES:-not set}"; \
 		echo "SLURM_GPUS_ON_NODE: $${SLURM_GPUS_ON_NODE:-not set}"; \
@@ -157,12 +160,27 @@ check-gpu:
 		echo "✗ nvidia-smi not found (GPU drivers may not be available)"; \
 	fi; \
 	echo ""; \
-	echo "2. CONTAINER GPU ACCESS CHECK:"; \
+	echo "2. CONTAINER ENVIRONMENT CHECK:"; \
+	echo "------------------------------"; \
+	echo "Checking what's available in container..."; \
+	apptainer exec --nv "$$CONTAINER" sh -c 'echo "PATH: $$PATH"; echo ""; echo "Python locations:"; ls -la /usr/bin/python* 2>/dev/null || echo "  (not found)"; echo ""; echo "Shell locations:"; ls -la /bin/sh /bin/bash /usr/bin/bash 2>/dev/null | head -3 || echo "  (not found)"'; \
+	echo ""; \
+	echo "3. CONTAINER GPU ACCESS CHECK:"; \
 	echo "-----------------------------"; \
 	export PYTHONNOUSERSITE=1; \
 	export APPTAINER_USE_GPU=1; \
 	echo "Running diagnostics inside container..."; \
-	apptainer exec --nv "$$CONTAINER" python -c "\
+	if apptainer exec --nv "$$CONTAINER" sh -c 'test -x /usr/bin/python3' 2>/dev/null; then \
+		PYTHON_CMD="/usr/bin/python3"; \
+	elif apptainer exec --nv "$$CONTAINER" sh -c 'test -x /usr/bin/python' 2>/dev/null; then \
+		PYTHON_CMD="/usr/bin/python"; \
+	else \
+		echo "⚠ ERROR: Python not found in container. Container may be corrupted."; \
+		echo "Try rebuilding: make build-container MODEL=$$MODEL_NAME"; \
+		PYTHON_CMD="/usr/bin/python3"; \
+	fi; \
+	echo "Using Python: $$PYTHON_CMD"; \
+	apptainer exec --env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --nv "$$CONTAINER" $$PYTHON_CMD -c "\
 import sys; \
 import torch; \
 print('Python:', sys.version.split()[0]); \
@@ -185,9 +203,9 @@ else: \
     print('  4. Check container CUDA version matches cluster drivers'); \
 "; \
 	echo ""; \
-	echo "3. CONTAINER CUDA LIBRARIES:"; \
+	echo "4. CONTAINER CUDA LIBRARIES:"; \
 	echo "---------------------------"; \
-	apptainer exec --nv "$$CONTAINER" bash -c "\
+	apptainer exec --env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --nv "$$CONTAINER" /bin/sh -c "\
 if [ -d /usr/local/cuda ]; then \
     echo 'CUDA installation found: /usr/local/cuda'; \
     if [ -f /usr/local/cuda/version.txt ]; then \
@@ -201,9 +219,15 @@ else \
     echo '⚠ CUDA directory not found in container'; \
 fi"; \
 	echo ""; \
-	echo "4. COMPATIBILITY CHECK:"; \
+	echo ""; \
+	echo "5. COMPATIBILITY CHECK:"; \
 	echo "----------------------"; \
-	apptainer exec --nv "$$CONTAINER" python -c "\
+	if apptainer exec --nv "$$CONTAINER" sh -c 'test -x /usr/bin/python3' 2>/dev/null; then \
+		PYTHON_CMD="/usr/bin/python3"; \
+	else \
+		PYTHON_CMD="/usr/bin/python"; \
+	fi; \
+	apptainer exec --env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --nv "$$CONTAINER" $$PYTHON_CMD -c "\
 import torch; \
 if torch.cuda.is_available() and torch.cuda.device_count() > 0: \
     print('✓ GPU is accessible inside container'); \
