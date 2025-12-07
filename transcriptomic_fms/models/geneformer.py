@@ -557,7 +557,6 @@ class GeneformerModel(BaseEmbeddingModel):
             # The output is: {output_dir}/{output_prefix}.dataset/
             # Check what was actually created
             tokenized_contents = list(tokenized_data_dir.iterdir())
-            logger.info(f"Tokenized output contents: {[str(p.name) for p in tokenized_contents]}")
 
             # Look for .dataset directory - this is what extract_embs expects
             dataset_dirs = [
@@ -566,7 +565,6 @@ class GeneformerModel(BaseEmbeddingModel):
             if dataset_dirs:
                 # Found .dataset directory - extract_embs expects the path to this directory
                 dataset_dir = dataset_dirs[0]
-                logger.info(f"Found dataset directory: {dataset_dir}")
                 input_data_path = str(dataset_dir)  # Path to the .dataset directory itself
             else:
                 # Check if tokenized_data_dir itself is structured as a dataset
@@ -574,7 +572,6 @@ class GeneformerModel(BaseEmbeddingModel):
                 if any(d.is_dir() for d in tokenized_contents):
                     # Try using the first subdirectory
                     dataset_dir = [d for d in tokenized_contents if d.is_dir()][0]
-                    logger.info(f"Using subdirectory as dataset: {dataset_dir}")
                     input_data_path = str(dataset_dir)
                 else:
                     raise RuntimeError(

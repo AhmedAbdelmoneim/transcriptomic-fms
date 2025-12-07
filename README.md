@@ -145,9 +145,15 @@ make install-model MODEL=geneformer
 # Auto-download model (requires git-lfs)
 make embed MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/embeddings.npy
 
-# Use existing model
+# Use existing model with custom batch size
 make embed MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/embeddings.npy \
-    MODEL_ARGS="--model-path /path/to/Geneformer"
+    MODEL_ARGS="--model-path /path/to/Geneformer --batch-size 50"
+
+# On HPC with custom batch size
+make hpc-embed-interactive MODEL=geneformer \
+    INPUT=data/test.h5ad \
+    OUTPUT=output/embeddings.npy \
+    MODEL_ARGS="--batch-size 50 --device cuda"
 ```
 
 **Note:** 
