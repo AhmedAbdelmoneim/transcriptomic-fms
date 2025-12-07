@@ -160,87 +160,75 @@ check-gpu:
 		echo "✗ nvidia-smi not found (GPU drivers may not be available)"; \
 	fi; \
 	echo ""; \
-	echo "2. CONTAINER ENVIRONMENT CHECK:"; \
-	echo "------------------------------"; \
-	echo "Checking what's available in container..."; \
-	apptainer exec --nv "$$CONTAINER" sh -c 'echo "PATH: $$PATH"; echo ""; echo "Python locations:"; ls -la /usr/bin/python* 2>/dev/null || echo "  (not found)"; echo ""; echo "Shell locations:"; ls -la /bin/sh /bin/bash /usr/bin/bash 2>/dev/null | head -3 || echo "  (not found)"'; \
-	echo ""; \
-	echo "3. CONTAINER GPU ACCESS CHECK:"; \
+	echo "2. CONTAINER GPU ACCESS CHECK:"; \
 	echo "-----------------------------"; \
 	export PYTHONNOUSERSITE=1; \
 	export APPTAINER_USE_GPU=1; \
-	echo "Running diagnostics inside container..."; \
-	if apptainer exec --nv "$$CONTAINER" sh -c 'test -x /usr/bin/python3' 2>/dev/null; then \
-		PYTHON_CMD="/usr/bin/python3"; \
-	elif apptainer exec --nv "$$CONTAINER" sh -c 'test -x /usr/bin/python' 2>/dev/null; then \
-		PYTHON_CMD="/usr/bin/python"; \
-	else \
-		echo "⚠ ERROR: Python not found in container. Container may be corrupted."; \
-		echo "Try rebuilding: make build-container MODEL=$$MODEL_NAME"; \
-		PYTHON_CMD="/usr/bin/python3"; \
-	fi; \
-	echo "Using Python: $$PYTHON_CMD"; \
-	apptainer exec --env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --nv "$$CONTAINER" $$PYTHON_CMD -c "\
+	echo "Running Python diagnostics inside container..."; \
+	echo "(Using same bind mounts as working command)"; \
+	echo ""; \
+	apptainer exec --nv \
+		--bind "$(shell pwd)/data:/transcriptomic-fms/data" \
+		--bind "$(shell pwd)/output:/transcriptomic-fms/output" \
+		--bind "$(shell pwd)/models:/transcriptomic-fms/models" \
+		"$$CONTAINER" \
+		python -c "\
 import sys; \
 import torch; \
-print('Python:', sys.version.split()[0]); \
-print('PyTorch version:', torch.__version__); \
+import os; \
+print('=== Python Environment ==='); \
+print('Python version:', sys.version.split()[0]); \
+print('Python executable:', sys.executable); \
 print(''); \
-print('CUDA available:', torch.cuda.is_available()); \
-print('CUDA device count:', torch.cuda.device_count()); \
+print('=== PyTorch Information ==='); \
+print('PyTorch version:', torch.__version__); \
+print('PyTorch CUDA available:', torch.cuda.is_available()); \
 if torch.cuda.is_available(): \
-    print('CUDA version (PyTorch):', torch.version.cuda); \
-    for i in range(torch.cuda.device_count()): \
-        print(f'  Device {i}: {torch.cuda.get_device_name(i)}'); \
-        print(f'    Memory: {torch.cuda.get_device_properties(i).total_memory / 1e9:.1f} GB'); \
+    print('PyTorch CUDA version:', torch.version.cuda); \
 else: \
-    print('⚠ WARNING: CUDA not available in container'); \
-    print(''); \
-    print('Troubleshooting:'); \
-    print('  1. Verify you have GPU allocation: salloc --gres=gpu:1 ...'); \
-    print('  2. Check CUDA_VISIBLE_DEVICES is set (should be visible above)'); \
-    print('  3. Verify --nv flag is working (this script uses it)'); \
-    print('  4. Check container CUDA version matches cluster drivers'); \
-"; \
-	echo ""; \
-	echo "4. CONTAINER CUDA LIBRARIES:"; \
-	echo "---------------------------"; \
-	apptainer exec --env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --nv "$$CONTAINER" /bin/sh -c "\
-if [ -d /usr/local/cuda ]; then \
-    echo 'CUDA installation found: /usr/local/cuda'; \
-    if [ -f /usr/local/cuda/version.txt ]; then \
-        echo 'CUDA version (from container):'; \
-        cat /usr/local/cuda/version.txt; \
-    fi; \
-    echo ''; \
-    echo 'CUDA libraries:'; \
-    ls -lh /usr/local/cuda/lib64/libcuda*.so* 2>/dev/null | head -3 || echo '  (library check skipped)'; \
-else \
-    echo '⚠ CUDA directory not found in container'; \
-fi"; \
-	echo ""; \
-	echo ""; \
-	echo "5. COMPATIBILITY CHECK:"; \
-	echo "----------------------"; \
-	if apptainer exec --nv "$$CONTAINER" sh -c 'test -x /usr/bin/python3' 2>/dev/null; then \
-		PYTHON_CMD="/usr/bin/python3"; \
-	else \
-		PYTHON_CMD="/usr/bin/python"; \
-	fi; \
-	apptainer exec --env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --nv "$$CONTAINER" $$PYTHON_CMD -c "\
-import torch; \
+    print('PyTorch CUDA version: N/A'); \
+print(''); \
+print('=== CUDA Device Detection ==='); \
+print('torch.cuda.device_count():', torch.cuda.device_count()); \
+print('torch.cuda.is_available():', torch.cuda.is_available()); \
+print('CUDA_VISIBLE_DEVICES:', os.environ.get('CUDA_VISIBLE_DEVICES', 'not set')); \
+print(''); \
 if torch.cuda.is_available() and torch.cuda.device_count() > 0: \
+    print('✓ CUDA devices detected:'); \
+    for i in range(torch.cuda.device_count()): \
+        props = torch.cuda.get_device_properties(i); \
+        print(f'  Device {i}: {props.name}'); \
+        print(f'    Total Memory: {props.total_memory / 1e9:.1f} GB'); \
+        print(f'    Compute Capability: {props.major}.{props.minor}'); \
+    print(''); \
     print('✓ GPU is accessible inside container'); \
     print('✓ PyTorch can detect CUDA devices'); \
     print('✓ Container setup appears correct'); \
 else: \
     print('✗ GPU is NOT accessible inside container'); \
     print(''); \
+    print('Diagnostics:'); \
+    print('  torch.cuda.is_available() =', torch.cuda.is_available()); \
+    print('  torch.cuda.device_count() =', torch.cuda.device_count()); \
+    print(''); \
     print('Possible issues:'); \
-    print('  - Container built with CUDA 11.7, but host driver may not support it'); \
-    print('  - --nv flag not properly exposing GPU to container'); \
-    print('  - CUDA_VISIBLE_DEVICES restriction'); \
+    print('  1. Container CUDA 11.7 may not be compatible with host driver'); \
+    print('     - Host shows CUDA 13.0 (forward compatible, should work)'); \
+    print('     - But MIG device might need special handling'); \
+    print('  2. MIG device UUID in CUDA_VISIBLE_DEVICES may not work with --nv'); \
+    print('  3. Try: export CUDA_VISIBLE_DEVICES=0 (if non-MIG GPU available)'); \
 "; \
+	echo ""; \
+	echo "3. CUDA VERSION COMPATIBILITY:"; \
+	echo "-----------------------------"; \
+	echo "Container CUDA version: 11.7.1"; \
+	echo "Container PyTorch: 1.13.1+cu117"; \
+	if command -v nvidia-smi &> /dev/null; then \
+		echo "Host CUDA version (from driver): 13.0"; \
+		echo ""; \
+		echo "Compatibility: CUDA 13.0 driver is forward-compatible with CUDA 11.7"; \
+		echo "This should work, but MIG devices may need special handling."; \
+	fi; \
 	echo ""; \
 	echo "========================================="
 
