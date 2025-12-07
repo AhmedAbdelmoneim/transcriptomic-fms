@@ -35,6 +35,10 @@ requires-python = ">=3.11"
 # Note: Model-specific dependencies are installed in their respective containers
 # to avoid conflicts. For local development, install manually:
 # pip install scgpt "torch<=2.2.2" "numpy<2" gdown ...
+scimilarity = [
+    "scimilarity",
+    "requests",
+]
 
 [project.scripts]
 transcriptomic-fms = "transcriptomic_fms.cli.main:main"
