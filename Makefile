@@ -165,14 +165,14 @@ check-gpu:
 	export PYTHONNOUSERSITE=1; \
 	export APPTAINER_USE_GPU=1; \
 	echo "Running Python diagnostics inside container..."; \
-	echo "(Using same bind mounts as working command)"; \
 	echo ""; \
 	apptainer exec --nv \
 		--bind "$(shell pwd)/data:/transcriptomic-fms/data" \
 		--bind "$(shell pwd)/output:/transcriptomic-fms/output" \
 		--bind "$(shell pwd)/models:/transcriptomic-fms/models" \
+		--env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
 		"$$CONTAINER" \
-		python -c "\
+		/usr/bin/python3 -c "\
 import sys; \
 import torch; \
 import os; \
