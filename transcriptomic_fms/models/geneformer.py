@@ -558,9 +558,11 @@ class GeneformerModel(BaseEmbeddingModel):
             # Check what was actually created
             tokenized_contents = list(tokenized_data_dir.iterdir())
             logger.info(f"Tokenized output contents: {[str(p.name) for p in tokenized_contents]}")
-            
+
             # Look for .dataset directory - this is what extract_embs expects
-            dataset_dirs = [d for d in tokenized_contents if d.is_dir() and d.name.endswith(".dataset")]
+            dataset_dirs = [
+                d for d in tokenized_contents if d.is_dir() and d.name.endswith(".dataset")
+            ]
             if dataset_dirs:
                 # Found .dataset directory - extract_embs expects the path to this directory
                 dataset_dir = dataset_dirs[0]
