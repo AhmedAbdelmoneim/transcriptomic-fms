@@ -165,9 +165,14 @@ def embed_command(args: argparse.Namespace, model_args: dict[str, Any]) -> None:
     # Prefix model name to output filename
     # e.g., embeddings.npy -> scimilarity_embeddings.npy
     # or output/embeddings.npy -> output/scimilarity_embeddings.npy
+    # Skip prefixing if filename already starts with model name to avoid double prefix
     output_dir = output_path.parent
     base_name = output_path.stem
-    prefixed_filename = f"{args.model}_{base_name}.npy"
+    if base_name.startswith(f"{args.model}_"):
+        # Already prefixed, use as-is
+        prefixed_filename = f"{base_name}.npy"
+    else:
+        prefixed_filename = f"{args.model}_{base_name}.npy"
     output_path = output_dir / prefixed_filename
     logger.info(f"Output will be saved as: {output_path}")
 
