@@ -216,6 +216,7 @@ class GeneformerModel(BaseEmbeddingModel):
             # Find actual model directory (Geneformer-V1-10M subdirectory)
             actual_model_dir = self._find_actual_model_dir()
 
+            # Initialize extractor with emb_label to preserve cell_id in CSV output
             self._extractor = EmbExtractor(
                 model_type="Pretrained",
                 emb_mode="cell",  # Fixed to cell embeddings
@@ -225,6 +226,7 @@ class GeneformerModel(BaseEmbeddingModel):
                 emb_layer=-1,  # 2nd to last layer (fixed)
                 model_version=GENEFORMER_MODEL_VERSION,  # "V1" or "V2"
                 token_dictionary_file=str(self.token_dict_file) if self.token_dict_file else None,
+                emb_label=["cell_id"],  # Preserve cell_id in CSV output for ordering
             )
         return self._extractor
 
@@ -614,51 +616,24 @@ class GeneformerModel(BaseEmbeddingModel):
                     )
 
                 # Read embeddings CSV
-                # First, read without index to see what columns are available
+                # Try to read with cell_id as index if available (from emb_label parameter)
                 emb_df_temp = pd.read_csv(emb_csv)
-                logger.info(f"CSV columns: {emb_df_temp.columns.tolist()}")
                 
-                # Try to find the cell ID column
-                # Geneformer might use 'cell_id', 'CellID', or the first column
-                cell_id_col = None
-                for col_name in ['cell_id', 'CellID', 'cellID', emb_df_temp.columns[0]]:
-                    if col_name in emb_df_temp.columns:
-                        cell_id_col = col_name
-                        break
-                
-                if cell_id_col is None:
-                    # Use first column as index
-                    cell_id_col = emb_df_temp.columns[0]
-                    logger.warning(f"Could not find cell_id column, using first column: {cell_id_col}")
-                
-                # Read with the identified cell ID column as index
-                emb_df = pd.read_csv(emb_csv, index_col=cell_id_col)
-
-                # Debug: Check what the CSV index contains
-                logger.info(f"CSV index name: {emb_df.index.name}")
-                logger.info(f"CSV index sample (first 5): {emb_df.index[:5].tolist()}")
-                logger.info(f"Original cell order sample (first 5): {original_cell_order[:5].tolist()}")
-                
-                # Check if cell IDs match (as sets)
-                csv_cell_ids = set(emb_df.index)
-                original_cell_ids = set(original_cell_order)
-                
-                if csv_cell_ids != original_cell_ids:
-                    missing_in_csv = original_cell_ids - csv_cell_ids
-                    extra_in_csv = csv_cell_ids - original_cell_ids
-                    logger.error(
-                        f"Cell ID mismatch! Missing in CSV: {len(missing_in_csv)}, "
-                        f"Extra in CSV: {len(extra_in_csv)}"
+                # Check if cell_id column exists (from emb_label parameter)
+                if 'cell_id' in emb_df_temp.columns:
+                    logger.info("Found cell_id column in CSV, using it for ordering")
+                    emb_df = pd.read_csv(emb_csv, index_col='cell_id')
+                else:
+                    # Fallback: use first column as index (numeric indices)
+                    logger.warning(
+                        "No cell_id column in CSV. Using positional order. "
+                        "Consider using emb_label parameter to preserve cell IDs."
                     )
-                    if missing_in_csv:
-                        logger.error(f"Missing cell IDs (first 10): {list(missing_in_csv)[:10]}")
-                    if extra_in_csv:
-                        logger.error(f"Extra cell IDs (first 10): {list(extra_in_csv)[:10]}")
-                    raise ValueError(
-                        f"Cell IDs in CSV do not match input cell IDs. "
-                        f"This suggests the tokenization process changed cell IDs. "
-                        f"Missing: {len(missing_in_csv)}, Extra: {len(extra_in_csv)}"
-                    )
+                    emb_df = pd.read_csv(emb_csv, index_col=0)
+                
+                # Log CSV structure for debugging
+                logger.debug(f"CSV shape: {emb_df.shape}, columns: {len(emb_df.columns)}")
+                logger.debug(f"CSV index sample (first 5): {emb_df.index[:5].tolist()}")
 
                 # Extract embedding columns (all columns except metadata)
                 # Embedding columns are typically named 'emb_0', 'emb_1', etc.
@@ -686,25 +661,33 @@ class GeneformerModel(BaseEmbeddingModel):
                     )
 
                 # Reorder embeddings to match original cell order
-                # Check if order matches
-                if emb_df.index.equals(pd.Index(original_cell_order)):
-                    # Already in correct order
-                    embeddings = emb_df[emb_cols].values
-                else:
-                    # Reorder to match original order
-                    logger.info("Reordering embeddings to match input cell order...")
-                    # Use loc to preserve order - this will raise KeyError if any cells are missing
-                    try:
-                        emb_df_reordered = emb_df.loc[original_cell_order]
+                if emb_df.index.name == 'cell_id' or isinstance(emb_df.index[0], str):
+                    # CSV has cell IDs as index - match them back to original order
+                    if set(emb_df.index) == set(original_cell_order):
+                        logger.info("Reordering embeddings to match input cell order...")
+                        # Reindex to match original order
+                        emb_df_reordered = emb_df.reindex(original_cell_order)
                         embeddings = emb_df_reordered[emb_cols].values
-                    except KeyError as e:
-                        # Some cells are missing from the CSV
-                        missing_cells = set(original_cell_order) - set(emb_df.index)
+                    else:
+                        # Cell IDs don't match - this shouldn't happen
+                        missing = set(original_cell_order) - set(emb_df.index)
+                        extra = set(emb_df.index) - set(original_cell_order)
                         raise ValueError(
-                            f"Some cells are missing from embeddings CSV: {len(missing_cells)} cells. "
-                            f"First few: {list(missing_cells)[:5]}. "
-                            f"This suggests cells were filtered during tokenization or embedding extraction."
-                        ) from e
+                            f"Cell ID mismatch: missing {len(missing)}, extra {len(extra)}. "
+                            f"First few missing: {list(missing)[:5]}"
+                        )
+                else:
+                    # CSV has numeric indices - assume order is preserved
+                    logger.info("CSV has numeric indices, assuming embeddings are in input order")
+                    embeddings = emb_df[emb_cols].values
+                
+                # Verify we have the right number of embeddings
+                if embeddings.shape[0] != len(original_cell_order):
+                    raise ValueError(
+                        f"Embedding count mismatch: got {embeddings.shape[0]} embeddings, "
+                        f"expected {len(original_cell_order)} cells. "
+                        f"This suggests cells were filtered during processing."
+                    )
 
                 # Validate embeddings
                 self.validate_embeddings(embeddings, adata.n_obs)
