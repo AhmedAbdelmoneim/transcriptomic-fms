@@ -551,14 +551,6 @@ class GeneformerModel(BaseEmbeddingModel):
         """
         # Store original cell order to preserve it in output
         original_cell_order = adata.obs_names.values.copy()
-        
-        # Create debug directory for intermediate files (if DEBUG env var is set)
-        import os
-        debug_dir = None
-        if os.environ.get("GENEFORMER_DEBUG"):
-            debug_dir = Path("debug_geneformer")
-            debug_dir.mkdir(exist_ok=True)
-            logger.info(f"Debug mode enabled: saving intermediate files to {debug_dir}")
 
         # Create temporary directory for tokenized data
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -568,28 +560,6 @@ class GeneformerModel(BaseEmbeddingModel):
             # Tokenize data
             logger.info("Tokenizing data for Geneformer...")
             tokenized_data_dir = self._tokenize_data(adata, tokenized_dir)
-            
-            # Save tokenized dataset info for debugging
-            if debug_dir:
-                import shutil
-                debug_tokenized = debug_dir / "tokenized_dataset"
-                if debug_tokenized.exists():
-                    shutil.rmtree(debug_tokenized)
-                shutil.copytree(tokenized_data_dir, debug_tokenized)
-                logger.info(f"Saved tokenized dataset to {debug_tokenized}")
-                
-                # Try to load and inspect the dataset
-                try:
-                    from datasets import load_from_disk
-                    dataset = load_from_disk(str(tokenized_data_dir / "tokenized.dataset"))
-                    logger.info(f"Tokenized dataset features: {list(dataset.features.keys())}")
-                    logger.info(f"Tokenized dataset num_rows: {len(dataset)}")
-                    if 'cell_id' in dataset.features:
-                        logger.info(f"First 5 cell_ids: {dataset['cell_id'][:5]}")
-                    else:
-                        logger.warning("cell_id not found in dataset features")
-                except Exception as e:
-                    logger.warning(f"Could not inspect tokenized dataset: {e}")
 
             # The tokenizer creates a .dataset directory (HuggingFace Dataset format)
             # The output is: {output_dir}/{output_prefix}.dataset/
@@ -647,29 +617,10 @@ class GeneformerModel(BaseEmbeddingModel):
                         f"Embeddings file not found: {emb_csv}. "
                         "Check that extract_embs completed successfully."
                     )
-                
-                # Save CSV for debugging
-                if debug_dir:
-                    debug_csv = debug_dir / "embeddings.csv"
-                    import shutil
-                    shutil.copy(emb_csv, debug_csv)
-                    logger.info(f"Saved embeddings CSV to {debug_csv}")
 
                 # Read embeddings CSV
-                emb_df_temp = pd.read_csv(emb_csv)
-                logger.info(f"CSV columns: {emb_df_temp.columns.tolist()[:10]}... (showing first 10)")
-                logger.info(f"CSV shape: {emb_df_temp.shape}")
-                
-                # Check if cell_id column exists
-                if 'cell_id' in emb_df_temp.columns:
-                    logger.info("Found cell_id column in CSV, using it for ordering")
-                    emb_df = pd.read_csv(emb_csv, index_col='cell_id')
-                    logger.info(f"CSV index (cell_id) sample (first 5): {emb_df.index[:5].tolist()}")
-                else:
-                    # Use first column as index (numeric indices)
-                    logger.info("No cell_id column in CSV, using numeric index")
-                    emb_df = pd.read_csv(emb_csv, index_col=0)
-                    logger.info(f"CSV index sample (first 5): {emb_df.index[:5].tolist()}")
+                # Geneformer outputs CSV with numeric indices, but embeddings are in same order as input
+                emb_df = pd.read_csv(emb_csv, index_col=0)
 
                 # Extract embedding columns (all columns except metadata)
                 # Embedding columns are typically named 'emb_0', 'emb_1', etc.
@@ -696,66 +647,41 @@ class GeneformerModel(BaseEmbeddingModel):
                         f"got {emb_df.shape[0]}"
                     )
 
-                # Reorder embeddings to match original cell order
-                # Try to get cell order from tokenized dataset first
+                # Verify embeddings are in correct order by checking tokenized dataset
+                # The tokenized dataset preserves cell_id, and embeddings are extracted in that order
                 try:
                     from datasets import load_from_disk
+
                     tokenized_dataset = load_from_disk(str(input_data_path))
-                    logger.info(f"Tokenized dataset features: {list(tokenized_dataset.features.keys())}")
-                    
-                    if 'cell_id' in tokenized_dataset.features:
-                        tokenized_cell_ids = tokenized_dataset['cell_id']
-                        logger.info(f"Tokenized dataset has {len(tokenized_cell_ids)} cells")
-                        logger.info(f"First 5 cell_ids from tokenized dataset: {tokenized_cell_ids[:5]}")
-                        logger.info(f"First 5 cell_ids from original: {original_cell_order[:5]}")
-                        
-                        # Check if order matches
-                        if list(tokenized_cell_ids) == list(original_cell_order):
-                            logger.info("Tokenized dataset order matches input order - embeddings should be in correct order")
-                            embeddings = emb_df[emb_cols].values
-                        else:
-                            # Need to reorder based on tokenized dataset order
-                            logger.info("Reordering embeddings based on tokenized dataset cell order...")
-                            # Create mapping: tokenized position -> original position
+
+                    if "cell_id" in tokenized_dataset.features:
+                        tokenized_cell_ids = tokenized_dataset["cell_id"]
+                        # Check if order matches input order
+                        if list(tokenized_cell_ids) != list(original_cell_order):
+                            # Reorder embeddings to match original cell order
                             tokenized_to_original_idx = {
-                                cell_id: orig_idx 
+                                cell_id: orig_idx
                                 for orig_idx, cell_id in enumerate(original_cell_order)
                             }
-                            # Get positions in tokenized order that correspond to original order
                             reorder_idx = [
                                 tokenized_to_original_idx.get(cell_id, None)
                                 for cell_id in tokenized_cell_ids
                             ]
-                            # Filter out None values (shouldn't happen if all cells match)
                             if None in reorder_idx:
-                                raise ValueError("Some cells in tokenized dataset don't match original cells")
-                            # Reorder embeddings
+                                raise ValueError(
+                                    "Some cells in tokenized dataset don't match original cells"
+                                )
                             embeddings = emb_df.iloc[reorder_idx][emb_cols].values
-                    else:
-                        logger.warning("Tokenized dataset doesn't have cell_id feature")
-                        # Fallback to assuming order is preserved
-                        embeddings = emb_df[emb_cols].values
-                except Exception as e:
-                    logger.warning(f"Could not load tokenized dataset for ordering: {e}")
-                    # Fallback: if CSV has cell IDs, use them; otherwise assume order
-                    if emb_df.index.name == 'cell_id' or (len(emb_df) > 0 and isinstance(emb_df.index[0], str)):
-                        # CSV has cell IDs as index
-                        if set(emb_df.index) == set(original_cell_order):
-                            logger.info("Reordering embeddings to match input cell order using CSV cell_id...")
-                            emb_df_reordered = emb_df.reindex(original_cell_order)
-                            embeddings = emb_df_reordered[emb_cols].values
                         else:
-                            missing = set(original_cell_order) - set(emb_df.index)
-                            extra = set(emb_df.index) - set(original_cell_order)
-                            raise ValueError(
-                                f"Cell ID mismatch: missing {len(missing)}, extra {len(extra)}. "
-                                f"First few missing: {list(missing)[:5]}"
-                            )
+                            # Order matches - embeddings are already in correct order
+                            embeddings = emb_df[emb_cols].values
                     else:
-                        # CSV has numeric indices - assume order is preserved
-                        logger.info("CSV has numeric indices, assuming embeddings are in input order")
+                        # No cell_id in dataset - assume order is preserved
                         embeddings = emb_df[emb_cols].values
-                
+                except Exception:
+                    # Fallback: assume order is preserved (tokenized dataset should match input order)
+                    embeddings = emb_df[emb_cols].values
+
                 # Verify we have the right number of embeddings
                 if embeddings.shape[0] != len(original_cell_order):
                     raise ValueError(
