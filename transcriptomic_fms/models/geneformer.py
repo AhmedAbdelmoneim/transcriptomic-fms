@@ -542,8 +542,11 @@ class GeneformerModel(BaseEmbeddingModel):
             **kwargs: Additional arguments (ignored)
 
         Returns:
-            Embeddings array of shape (n_cells, n_dimensions)
+            Embeddings array of shape (n_cells, n_dimensions) in the same order as input cells
         """
+        # Store original cell order to preserve it in output
+        original_cell_order = adata.obs_names.values.copy()
+
         # Create temporary directory for tokenized data
         with tempfile.TemporaryDirectory() as tmpdir:
             tokenized_dir = Path(tmpdir) / "tokenized_data"
@@ -611,7 +614,15 @@ class GeneformerModel(BaseEmbeddingModel):
                     )
 
                 # Read embeddings CSV
+                # The CSV index should contain cell IDs (from loom file's cell_id attribute)
                 emb_df = pd.read_csv(emb_csv, index_col=0)
+
+                # Debug: log what the CSV index contains
+                logger.debug(f"CSV index name: {emb_df.index.name}")
+                logger.debug(f"CSV index sample (first 5): {emb_df.index[:5].tolist()}")
+                logger.debug(
+                    f"Original cell order sample (first 5): {original_cell_order[:5].tolist()}"
+                )
 
                 # Extract embedding columns (all columns except metadata)
                 # Embedding columns are typically named 'emb_0', 'emb_1', etc.
@@ -631,14 +642,35 @@ class GeneformerModel(BaseEmbeddingModel):
                         f"Available columns: {emb_df.columns.tolist()}"
                     )
 
-                embeddings = emb_df[emb_cols].values
-
                 # Ensure embeddings match number of cells
-                if embeddings.shape[0] != adata.n_obs:
+                if emb_df.shape[0] != adata.n_obs:
                     raise ValueError(
                         f"Embeddings shape mismatch: expected {adata.n_obs} cells, "
-                        f"got {embeddings.shape[0]}"
+                        f"got {emb_df.shape[0]}"
                     )
+
+                # Reorder embeddings to match original cell order
+                # The CSV index should contain cell IDs from the loom file (cell_id attribute)
+                # Match them back to original_cell_order
+                if not emb_df.index.equals(pd.Index(original_cell_order)):
+                    # Reindex to match original order
+                    logger.info("Reordering embeddings to match input cell order...")
+                    emb_df_reordered = emb_df.reindex(original_cell_order)
+
+                    # Check for any missing cells
+                    missing_mask = emb_df_reordered[emb_cols].isna().any(axis=1)
+                    if missing_mask.any():
+                        missing_cells = emb_df_reordered[missing_mask].index.tolist()
+                        raise ValueError(
+                            f"Some cells are missing from embeddings: {len(missing_cells)} cells. "
+                            f"First few: {missing_cells[:5]}. "
+                            f"CSV contains {len(emb_df)} cells, expected {len(original_cell_order)}."
+                        )
+
+                    embeddings = emb_df_reordered[emb_cols].values
+                else:
+                    # Already in correct order
+                    embeddings = emb_df[emb_cols].values
 
                 # Validate embeddings
                 self.validate_embeddings(embeddings, adata.n_obs)
