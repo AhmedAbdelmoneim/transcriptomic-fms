@@ -533,7 +533,7 @@ class GeneformerModel(BaseEmbeddingModel):
         output_path: Path,
         batch_size: Optional[int] = None,
         **kwargs: Any,
-    ) -> np.ndarray:
+    ) -> sc.AnnData:
         """
         Generate Geneformer embeddings.
 
@@ -547,7 +547,8 @@ class GeneformerModel(BaseEmbeddingModel):
             **kwargs: Additional arguments (ignored)
 
         Returns:
-            Embeddings array of shape (n_cells, n_dimensions) in the same order as input cells
+            AnnData object with embeddings in X (shape: n_cells, n_dimensions)
+            and obs preserved for cell mapping. No var needed.
         """
         # Store original cell order to preserve it in output
         original_cell_order = adata.obs_names.values.copy()
@@ -690,10 +691,19 @@ class GeneformerModel(BaseEmbeddingModel):
                         f"This suggests cells were filtered during processing."
                     )
 
-                # Validate embeddings
-                self.validate_embeddings(embeddings, adata.n_obs)
+                # Create barebones AnnData with embeddings in X and obs preserved
+                # Ensure obs matches the order of embeddings (which should match original_cell_order)
+                result_obs = adata.obs.loc[original_cell_order].copy()
+                result_adata = sc.AnnData(
+                    X=embeddings,
+                    obs=result_obs,
+                )
+                # No var needed for embeddings
 
-                return embeddings
+                # Validate embeddings
+                self.validate_embeddings(result_adata)
+
+                return result_adata
 
     def get_container_command(
         self,

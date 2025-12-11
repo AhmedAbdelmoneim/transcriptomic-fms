@@ -358,7 +358,7 @@ class SCimilarityModel(BaseEmbeddingModel):
         output_path: Path,
         batch_size: Optional[int] = None,
         **kwargs: Any,
-    ) -> np.ndarray:
+    ) -> sc.AnnData:
         """
         Generate SCimilarity embeddings.
 
@@ -369,7 +369,8 @@ class SCimilarityModel(BaseEmbeddingModel):
             **kwargs: Additional arguments (ignored)
 
         Returns:
-            Embeddings array of shape (n_cells, n_dimensions)
+            AnnData object with embeddings in X (shape: n_cells, n_dimensions)
+            and obs preserved for cell mapping. No var needed.
         """
         model = self._get_model()
 
@@ -381,19 +382,26 @@ class SCimilarityModel(BaseEmbeddingModel):
         if not isinstance(embeddings, np.ndarray):
             embeddings = np.array(embeddings)
 
-        # Validate embeddings before returning
-        self.validate_embeddings(embeddings, adata.n_obs)
+        # Create barebones AnnData with embeddings in X and obs preserved
+        result_adata = sc.AnnData(
+            X=embeddings,
+            obs=adata.obs.copy(),
+        )
+        # No var needed for embeddings
 
-        return embeddings
+        # Validate embeddings
+        self.validate_embeddings(result_adata)
 
-    def validate_embeddings(self, embeddings: np.ndarray, n_cells: int) -> None:
+        return result_adata
+
+    def validate_embeddings(self, adata: sc.AnnData) -> None:
         """
         Validate that embeddings have correct shape and properties.
 
         Overrides base class to add SCimilarity-specific validation.
         """
         # Call base class validation
-        super().validate_embeddings(embeddings, n_cells)
+        super().validate_embeddings(adata)
 
         # Additional SCimilarity-specific validation could go here if needed
         # For now, base validation is sufficient

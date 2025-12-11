@@ -27,7 +27,7 @@ make list-models
 
 **Locally:**
 ```bash
-make embed MODEL=pca INPUT=data/test.h5ad OUTPUT=output/embeddings.npy
+make embed MODEL=pca INPUT=data/test.h5ad OUTPUT=output/embeddings.h5ad
 ```
 
 **On HPC (interactive):**
@@ -39,7 +39,7 @@ salloc --time=4:00:00 --nodes=1 --cpus-per-task=8 --mem=64G \
 # Run embedding
 make hpc-embed-interactive MODEL=scgpt \
     INPUT=data/test.h5ad \
-    OUTPUT=output/embeddings.npy \
+    OUTPUT=output/embeddings.h5ad \
     MODEL_ARGS="--device cuda"
 ```
 
@@ -47,11 +47,13 @@ make hpc-embed-interactive MODEL=scgpt \
 ```bash
 make hpc-embed MODEL=scgpt \
     INPUT=data/test.h5ad \
-    OUTPUT=output/embeddings.npy \
+    OUTPUT=output/embeddings.h5ad \
     MODEL_ARGS="--device cuda"
 ```
 
-**Note:** Output files are automatically prefixed with the model name (e.g., `scgpt_embeddings.npy`).
+**Note:** 
+- Output files are automatically prefixed with the model name (e.g., `scgpt_embeddings.h5ad`)
+- Output is a barebones AnnData object with embeddings in `X` and `obs` preserved for cell mapping
 
 ## Available Models
 
@@ -60,7 +62,7 @@ make hpc-embed MODEL=scgpt \
 Baseline PCA embedding with optional HVG selection.
 
 ```bash
-make embed MODEL=pca INPUT=data/test.h5ad OUTPUT=output/embeddings.npy \
+make embed MODEL=pca INPUT=data/test.h5ad OUTPUT=output/embeddings.h5ad \
     MODEL_ARGS="--n-components 100 --use-hvg --n-hvg 2000"
 ```
 
@@ -89,14 +91,14 @@ make install-model MODEL=scgpt
 **Examples:**
 ```bash
 # Auto-download model
-make embed MODEL=scgpt INPUT=data/test.h5ad OUTPUT=output/embeddings.npy
+make embed MODEL=scgpt INPUT=data/test.h5ad OUTPUT=output/embeddings.h5ad
 
 # Use existing model
-make embed MODEL=scgpt INPUT=data/test.h5ad OUTPUT=output/embeddings.npy \
+make embed MODEL=scgpt INPUT=data/test.h5ad OUTPUT=output/embeddings.h5ad \
     MODEL_ARGS="--model-dir /path/to/scGPT_human --batch-size 32"
 
 # Use all genes (no HVG filtering)
-make embed MODEL=scgpt INPUT=data/test.h5ad OUTPUT=output/embeddings.npy \
+make embed MODEL=scgpt INPUT=data/test.h5ad OUTPUT=output/embeddings.h5ad \
     MODEL_ARGS="--n-hvg 0"
 ```
 
@@ -117,10 +119,10 @@ make install-model MODEL=scimilarity
 **Examples:**
 ```bash
 # Auto-download model (~30GB, may take time)
-make embed MODEL=scimilarity INPUT=data/test.h5ad OUTPUT=output/embeddings.npy
+make embed MODEL=scimilarity INPUT=data/test.h5ad OUTPUT=output/embeddings.h5ad
 
 # Use existing model
-make embed MODEL=scimilarity INPUT=data/test.h5ad OUTPUT=output/embeddings.npy \
+make embed MODEL=scimilarity INPUT=data/test.h5ad OUTPUT=output/embeddings.h5ad \
     MODEL_ARGS="--model-path /path/to/scimilarity/model_v1.1"
 ```
 
@@ -143,16 +145,16 @@ make install-model MODEL=geneformer
 **Examples:**
 ```bash
 # Auto-download model (requires git-lfs)
-make embed MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/embeddings.npy
+make embed MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/embeddings.h5ad
 
 # Use existing model with custom batch size
-make embed MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/embeddings.npy \
+make embed MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/embeddings.h5ad \
     MODEL_ARGS="--model-path /path/to/Geneformer --batch-size 50"
 
 # On HPC with custom batch size
 make hpc-embed-interactive MODEL=geneformer \
     INPUT=data/test.h5ad \
-    OUTPUT=output/embeddings.npy \
+    OUTPUT=output/embeddings.h5ad \
     MODEL_ARGS="--batch-size 50 --device cuda"
 ```
 
@@ -212,8 +214,9 @@ Models are auto-registered via the `@register_model` decorator.
 python -m transcriptomic_fms.cli.main embed \
     --model <model_name> \
     --input <path/to/input.h5ad> \
-    --output <path/to/output.npy> \
+    --output <path/to/output.h5ad> \
     [--model-arg-name <value>]
+```
 
 # List models
 python -m transcriptomic_fms.cli.main list

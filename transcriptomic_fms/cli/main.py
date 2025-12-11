@@ -126,12 +126,12 @@ def embed_command(args: argparse.Namespace, model_args: dict[str, Any]) -> None:
 
     output_path = Path(args.output)
 
-    # Ensure output is .npy file
-    if output_path.suffix != ".npy":
+    # Ensure output is .h5ad file
+    if output_path.suffix != ".h5ad":
         logger.warning(
-            f"Output path should be .npy file. Changing {output_path} to {output_path.with_suffix('.npy')}"
+            f"Output path should be .h5ad file. Changing {output_path} to {output_path.with_suffix('.h5ad')}"
         )
-        output_path = output_path.with_suffix(".npy")
+        output_path = output_path.with_suffix(".h5ad")
 
     # Load model with model-specific arguments
     try:
@@ -163,16 +163,16 @@ def embed_command(args: argparse.Namespace, model_args: dict[str, Any]) -> None:
         sys.exit(1)
 
     # Prefix model name to output filename
-    # e.g., embeddings.npy -> scimilarity_embeddings.npy
-    # or output/embeddings.npy -> output/scimilarity_embeddings.npy
+    # e.g., embeddings.h5ad -> scimilarity_embeddings.h5ad
+    # or output/embeddings.h5ad -> output/scimilarity_embeddings.h5ad
     # Skip prefixing if filename already starts with model name to avoid double prefix
     output_dir = output_path.parent
     base_name = output_path.stem
     if base_name.startswith(f"{args.model}_"):
         # Already prefixed, use as-is
-        prefixed_filename = f"{base_name}.npy"
+        prefixed_filename = f"{base_name}.h5ad"
     else:
-        prefixed_filename = f"{args.model}_{base_name}.npy"
+        prefixed_filename = f"{args.model}_{base_name}.h5ad"
     output_path = output_dir / prefixed_filename
     logger.info(f"Output will be saved as: {output_path}")
 
@@ -196,18 +196,16 @@ def embed_command(args: argparse.Namespace, model_args: dict[str, Any]) -> None:
     embed_kwargs.update(model_args)
 
     logger.info(f"Generating embeddings with {args.model}...")
-    embeddings = model.embed(adata, output_path, **embed_kwargs)
+    result_adata = model.embed(adata, output_path, **embed_kwargs)
 
     # Validate
     logger.info("Validating embeddings...")
-    model.validate_embeddings(embeddings, adata.n_obs)
+    model.validate_embeddings(result_adata)
 
     # Save
     logger.info(f"Saving embeddings to {output_path}...")
-    import numpy as np
-
-    np.save(output_path, embeddings)
-    logger.info(f"Done! Embeddings shape: {embeddings.shape}")
+    result_adata.write(output_path)
+    logger.info(f"Done! Embeddings shape: {result_adata.shape}")
 
 
 def list_command(args: argparse.Namespace) -> None:
@@ -288,7 +286,7 @@ def main() -> None:
         "--input", required=True, type=Path, help="Input AnnData file (.h5ad)"
     )
     embed_parser.add_argument(
-        "--output", required=True, type=Path, help="Output embeddings file (.npy)"
+        "--output", required=True, type=Path, help="Output embeddings file (.h5ad)"
     )
     embed_parser.add_argument("--batch-size", type=int, help="Batch size for processing")
     embed_parser.set_defaults(func=embed_command)

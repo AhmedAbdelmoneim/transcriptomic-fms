@@ -68,7 +68,7 @@ class PCAModel(BaseEmbeddingModel):
         output_path: Path,
         batch_size: Optional[int] = None,
         **kwargs: Any,
-    ) -> np.ndarray:
+    ) -> sc.AnnData:
         """Generate PCA embeddings."""
         # Get data as dense array
         X = adata.X
@@ -87,25 +87,32 @@ class PCAModel(BaseEmbeddingModel):
         # Transform
         embeddings = self.pca_model.transform(X)
 
-        # Validate embeddings before returning
-        self.validate_embeddings(embeddings, adata.n_obs)
+        # Create barebones AnnData with embeddings in X and obs preserved
+        result_adata = sc.AnnData(
+            X=embeddings,
+            obs=adata.obs.copy(),
+        )
+        # No var needed for embeddings
 
-        return embeddings
+        # Validate embeddings
+        self.validate_embeddings(result_adata)
 
-    def validate_embeddings(self, embeddings: np.ndarray, n_cells: int) -> None:
+        return result_adata
+
+    def validate_embeddings(self, adata: sc.AnnData) -> None:
         """
         Validate that embeddings have correct shape and properties.
 
         Overrides base class to add PCA-specific validation.
         """
         # Call base class validation
-        super().validate_embeddings(embeddings, n_cells)
+        super().validate_embeddings(adata)
 
         # Additional PCA-specific validation
-        if embeddings.shape[1] != self.n_components:
+        if adata.X.shape[1] != self.n_components:
             raise ValueError(
                 f"Embeddings dimension mismatch: expected {self.n_components} components, "
-                f"got {embeddings.shape[1]}"
+                f"got {adata.X.shape[1]}"
             )
 
     def get_container_command(

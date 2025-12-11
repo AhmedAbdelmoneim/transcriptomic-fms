@@ -303,7 +303,7 @@ class SCGPTModel(BaseEmbeddingModel):
         output_path: Path,
         batch_size: Optional[int] = None,
         **kwargs: Any,
-    ) -> np.ndarray:
+    ) -> sc.AnnData:
         """
         Generate scGPT embeddings.
 
@@ -349,19 +349,28 @@ class SCGPTModel(BaseEmbeddingModel):
         if isinstance(embeddings, torch.Tensor):
             embeddings = embeddings.cpu().numpy()
 
-        # Validate embeddings before returning
-        self.validate_embeddings(embeddings, adata.n_obs)
+        # Create barebones AnnData with embeddings in X and obs preserved
+        # Use obs from embedded_adata if available (may have filtered cells), otherwise use original
+        result_obs = embedded_adata.obs.copy() if embedded_adata.n_obs == embeddings.shape[0] else adata.obs.copy()
+        result_adata = sc.AnnData(
+            X=embeddings,
+            obs=result_obs,
+        )
+        # No var needed for embeddings
 
-        return embeddings
+        # Validate embeddings
+        self.validate_embeddings(result_adata)
 
-    def validate_embeddings(self, embeddings: np.ndarray, n_cells: int) -> None:
+        return result_adata
+
+    def validate_embeddings(self, adata: sc.AnnData) -> None:
         """
         Validate that embeddings have correct shape and properties.
 
         Overrides base class to add scGPT-specific validation.
         """
         # Call base class validation
-        super().validate_embeddings(embeddings, n_cells)
+        super().validate_embeddings(adata)
 
         # Additional scGPT-specific validation could go here if needed
         # For now, base validation is sufficient
