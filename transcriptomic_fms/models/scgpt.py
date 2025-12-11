@@ -323,6 +323,34 @@ class SCGPTModel(BaseEmbeddingModel):
             gene_symbols = self._get_gene_symbols(adata)
             adata.var["gene_symbols"] = gene_symbols
 
+        import json
+        vocab_file = self.model_dir / "vocab.json"
+        
+        if vocab_file.exists():
+            with open(vocab_file, "r") as f:
+                vocab = json.load(f)
+            
+            # scGPT vocab keys are the gene symbols
+            vocab_genes = set(vocab.keys())
+            
+            # 2. Identify genes that will actually survive
+            # Ensure we look at the column you specified for symbols
+            gene_col = "gene_symbols"
+            if gene_col not in adata.var:
+                 adata.var[gene_col] = adata.var.index
+
+            common_genes = adata.var[adata.var[gene_col].isin(vocab_genes)].index
+            
+            # 3. Subset to these genes locally first
+            adata_safe = adata[:, common_genes].copy()
+            
+            # 4. CRITICAL: Remove cells that are now empty due to this subset
+            sc.pp.filter_cells(adata_safe, min_counts=1)
+            
+            print(f"Safety filter: Reduced from {adata.n_obs} to {adata_safe.n_obs} cells "
+                  f"after intersecting with model vocabulary.")
+            adata = adata_safe
+
         # Use provided batch_size or default
         effective_batch_size = batch_size or self.batch_size
 
@@ -334,6 +362,7 @@ class SCGPTModel(BaseEmbeddingModel):
             gene_col="gene_symbols",
             batch_size=effective_batch_size,
             device=self.device,
+            use_fast_transformer=False,
         )
 
         # Extract embeddings from obsm
