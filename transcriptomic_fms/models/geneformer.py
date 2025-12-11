@@ -1,6 +1,8 @@
 """Geneformer embedding model."""
 
+import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Optional
@@ -129,7 +131,7 @@ class GeneformerModel(BaseEmbeddingModel):
             # Check if model files exist
             if not self._model_exists():
                 if auto_download:
-                    print(f"Model not found at {self.model_path}. Downloading...")
+                    logger.info(f"Model not found at {self.model_path}. Downloading...")
                     self._download_model()
                 else:
                     raise ValueError(
@@ -137,9 +139,7 @@ class GeneformerModel(BaseEmbeddingModel):
                         f"Set auto_download=True to download automatically."
                     )
             else:
-                import sys
-
-                print(f"Using Geneformer model from: {self.model_path}", file=sys.stderr)
+                logger.info(f"Using Geneformer model from: {self.model_path}")
 
         # Find token dictionary files in model directory
         self.token_dict_file = self._find_token_dict()
@@ -355,10 +355,10 @@ class GeneformerModel(BaseEmbeddingModel):
                 "Then run: git lfs install"
             )
 
-        print(f"Downloading Geneformer model from HuggingFace...")
-        print(f"Repository: {GENEFORMER_MODEL_REPO}")
-        print(f"Model version: {GENEFORMER_MODEL_VERSION}")
-        print("Note: This may take a while as models are large. Using git-lfs...")
+        logger.info(f"Downloading Geneformer model from HuggingFace...")
+        logger.info(f"Repository: {GENEFORMER_MODEL_REPO}")
+        logger.info(f"Model version: {GENEFORMER_MODEL_VERSION}")
+        logger.info("Note: This may take a while as models are large. Using git-lfs...")
 
         try:
             # Clone the repository to a temporary location first
@@ -366,7 +366,7 @@ class GeneformerModel(BaseEmbeddingModel):
                 clone_dir = Path(tmpdir) / "Geneformer"
 
                 # Clone with git-lfs
-                print("Cloning repository...")
+                logger.info("Cloning repository...")
                 subprocess.run(
                     ["git", "clone", GENEFORMER_MODEL_REPO, str(clone_dir)],
                     check=True,
@@ -374,7 +374,7 @@ class GeneformerModel(BaseEmbeddingModel):
                 )
 
                 # Pull LFS files
-                print("Downloading model files (git-lfs)...")
+                logger.info("Downloading model files (git-lfs)...")
                 subprocess.run(
                     ["git", "lfs", "pull"],
                     cwd=str(clone_dir),
@@ -393,11 +393,7 @@ class GeneformerModel(BaseEmbeddingModel):
                 # Move model directory to target
                 target_model_dir = self.model_path / GENEFORMER_MODEL_DIR
                 if target_model_dir.exists():
-                    import shutil
-
                     shutil.rmtree(target_model_dir)
-
-                import shutil
 
                 shutil.move(str(source_model_dir), str(target_model_dir))
 
@@ -417,7 +413,7 @@ class GeneformerModel(BaseEmbeddingModel):
                     f"Expected to find {GENEFORMER_MODEL_DIR} in {self.model_path}"
                 )
 
-            print(f"Model downloaded successfully to {self.model_path}")
+            logger.info(f"Model downloaded successfully to {self.model_path}")
         except subprocess.CalledProcessError as e:
             raise RuntimeError(
                 f"Failed to download Geneformer model: {e}\n"
@@ -512,8 +508,6 @@ class GeneformerModel(BaseEmbeddingModel):
             # Tokenize the data
             # tokenize_data expects a directory containing input files
             # Create a temporary input directory with the loom file
-            import shutil
-
             input_dir = Path(tmpdir) / "input_data"
             input_dir.mkdir(exist_ok=True)
             shutil.copy(str(tmp_loom), str(input_dir / "data.loom"))

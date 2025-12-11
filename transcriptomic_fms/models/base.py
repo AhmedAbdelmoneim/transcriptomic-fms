@@ -219,31 +219,31 @@ class BaseEmbeddingModel(ABC):
         """
         if not isinstance(adata, sc.AnnData):
             raise ValueError("Embeddings must be an AnnData object")
-        
+
         embeddings = adata.X
         if embeddings is None:
             raise ValueError("AnnData.X is None - embeddings not found")
-        
+
         if not isinstance(embeddings, np.ndarray):
             # Convert sparse to dense for validation
             if hasattr(embeddings, "toarray"):
                 embeddings = embeddings.toarray()
             else:
                 embeddings = np.array(embeddings)
-        
+
         if embeddings.ndim != 2:
             raise ValueError(f"Embeddings must be 2D array, got shape {embeddings.shape}")
-        
+
         if embeddings.shape[0] != adata.n_obs:
             raise ValueError(
                 f"Embeddings shape mismatch: expected {adata.n_obs} cells, got {embeddings.shape[0]}"
             )
-        
+
         if np.any(np.isnan(embeddings)):
             raise ValueError("Embeddings contain NaN values")
         if np.any(np.isinf(embeddings)):
             raise ValueError("Embeddings contain Inf values")
-        
+
         # Ensure obs is present for cell mapping
         if adata.obs.empty:
             raise ValueError("AnnData.obs is empty - cell metadata required for mapping")
