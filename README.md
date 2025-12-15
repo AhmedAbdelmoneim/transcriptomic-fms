@@ -164,6 +164,46 @@ make hpc-embed-interactive MODEL=geneformer \
 - Tokenization creates intermediate .dataset files automatically
 - Model auto-download requires git-lfs to be installed
 
+### scConcept
+
+scConcept: contrastive pre-training for technology-agnostic single-cell representations beyond reconstruction ([GitHub](https://github.com/theislab/scConcept)).
+
+**Installation (local, optional):**
+```bash
+make install-model MODEL=scconcept
+```
+
+**Arguments:**
+- `--pretrained-model-name <str>`: Name of the pretrained scConcept model to load (default: `Corpus-30M`)
+- `--cache-dir <path>`: Cache directory for scConcept/lamin artifacts
+- `--device <str>`: `cuda` or `cpu` (auto-detects if not specified)
+- `--gene-id-column <str>`: Gene ID column in `adata.var` (default: `gene_id`)
+
+**Examples (local):**
+```bash
+# Use default pretrained model (Corpus-30M) with auto-download via scConcept
+make embed MODEL=scconcept INPUT=data/test.h5ad OUTPUT=output/embeddings.h5ad
+
+# Explicitly set cache directory and device
+make embed MODEL=scconcept INPUT=data/test.h5ad OUTPUT=output/embeddings.h5ad \
+    MODEL_ARGS="--cache-dir ./cache --device cuda"
+```
+
+**HPC container:**
+```bash
+module load apptainer
+make build-container MODEL=scconcept
+
+make hpc-embed-interactive MODEL=scconcept \
+    INPUT=data/test.h5ad \
+    OUTPUT=output/embeddings.h5ad \
+    MODEL_ARGS="--device cuda"
+```
+
+**Notes:**
+- scConcept expects Ensembl-style gene IDs via `var['gene_id']` (or `var['ensembl_id']` / index, which are normalized during preprocessing).
+- FlashAttention (`flash-attn==2.7.*`) is installed and compiled inside the scConcept container against CUDA 12.1 (via `nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04`), matching the CUDA runtime exposed on the HPC cluster through `apptainer --nv`.
+
 ## HPC Deployment
 
 ### Building Containers
