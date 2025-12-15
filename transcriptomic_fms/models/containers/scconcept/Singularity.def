@@ -38,7 +38,7 @@ From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
     # 4. Core scientific stack
     pip install "numpy" "pandas" "scanpy" "anndata" "scipy" "scikit-learn"
-    pip install "requests" "tqdm" "h5py" "tables"
+    pip install "requests" "tqdm" "h5py" "tables" "psutil"
 
     # 5. Install FlashAttention (required by scConcept)
     # Use --no-build-isolation as recommended by scConcept docs to ensure the build
