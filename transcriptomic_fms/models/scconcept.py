@@ -15,8 +15,14 @@ logger = get_logger(__name__)
 try:
     # scConcept package exposes the main class as `scConcept`
     from concept import scConcept as _scConcept
-except ImportError:
-    _scConcept = None
+except ImportError as e:  # pragma: no cover - import-time guard
+    # Only treat a missing top-level `concept` module as "not installed".
+    # For other ImportErrors (e.g. missing transitive deps), re-raise so users
+    # see the real underlying problem instead of a generic message.
+    if getattr(e, "name", None) == "concept":
+        _scConcept = None
+    else:
+        raise
 
 
 @register_model("scconcept")
@@ -260,7 +266,7 @@ class SCConceptModel(BaseEmbeddingModel):
     def get_required_dependencies(self) -> list[str]:
         """Get required dependencies for scConcept."""
         return [
-            "concept",
+            "scconcept",
             "lamin_dataloader",
             "flash-attn==2.7.*",
         ]
@@ -272,4 +278,3 @@ class SCConceptModel(BaseEmbeddingModel):
     def get_container_name(self) -> Optional[str]:
         """Get container name for scConcept."""
         return "scconcept"
-

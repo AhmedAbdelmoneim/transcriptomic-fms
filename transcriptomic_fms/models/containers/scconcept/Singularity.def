@@ -47,10 +47,11 @@ From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
     pip install \
         https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
 
-    # 6. Install scConcept and lamin_dataloader from GitHub without pulling extra deps
-    # Dependencies (torch, flash-attn, numpy, etc.) are already pinned above.
+    # 6. Install lamin_dataloader and scConcept from GitHub
+    # We keep torch/flash-attn pinned above, but allow scConcept to pull its
+    # remaining Python dependencies (e.g. lamin ecosystem, polars, etc.).
     pip install --no-deps git+https://github.com/theislab/lamin_dataloader.git
-    pip install --no-deps git+https://github.com/theislab/scConcept.git@main
+    pip install git+https://github.com/theislab/scConcept.git@main
 
     # 7. Project tooling & utilities
     pip install "ipython" "jupyterlab" "matplotlib" "notebook" "python-dotenv" "ruff"
