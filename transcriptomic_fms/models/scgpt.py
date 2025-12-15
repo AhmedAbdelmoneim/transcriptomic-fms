@@ -1,5 +1,9 @@
 """scGPT embedding model."""
 
+import json
+import os
+import ssl
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -9,6 +13,9 @@ import torch
 
 from transcriptomic_fms.models.base import BaseEmbeddingModel
 from transcriptomic_fms.models.registry import register_model
+from transcriptomic_fms.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 try:
     import scgpt as scg
@@ -138,7 +145,7 @@ class SCGPTModel(BaseEmbeddingModel):
             # Check if model files exist
             if not self._model_exists():
                 if auto_download:
-                    print(f"Model not found at {self.model_dir}. Downloading...")
+                    logger.info(f"Model not found at {self.model_dir}. Downloading...")
                     self._download_model()
                 else:
                     raise ValueError(
@@ -147,9 +154,7 @@ class SCGPTModel(BaseEmbeddingModel):
                         f"Set auto_download=True to download automatically."
                     )
             else:
-                import sys
-
-                print(f"Using scGPT model from: {self.model_dir}", file=sys.stderr)
+                logger.info(f"Using scGPT model from: {self.model_dir}")
 
     def preprocess(self, adata: sc.AnnData, output_path: Optional[Path] = None) -> sc.AnnData:
         """
@@ -188,8 +193,8 @@ class SCGPTModel(BaseEmbeddingModel):
                     f"First few provided: {self.hvg_list[:5]}"
                 )
             if len(available_hvgs) < len(self.hvg_list):
-                print(
-                    f"Warning: Only {len(available_hvgs)}/{len(self.hvg_list)} "
+                logger.warning(
+                    f"Only {len(available_hvgs)}/{len(self.hvg_list)} "
                     f"provided HVGs found in data. Using available subset."
                 )
             adata = adata[:, available_hvgs].copy()
@@ -200,20 +205,15 @@ class SCGPTModel(BaseEmbeddingModel):
             )
             adata = adata[:, adata.var.highly_variable].copy()
         # else: use all genes (no filtering)
-
-        # Ensure gene_symbols column exists after filtering
-        if "gene_symbols" not in adata.var.columns:
-            adata.var["gene_symbols"] = adata.var.index
+        # Note: gene_symbols column is already set above, filtering preserves it
 
         # Filter out cells with all-zero expression (empty rows)
         # This prevents errors in binning when encountering zero-size arrays
-        import numpy as np
-
         cell_sums = np.array(adata.X.sum(axis=1)).flatten()
         non_zero_cells = cell_sums > 0
         if not np.all(non_zero_cells):
             n_filtered = np.sum(~non_zero_cells)
-            print(
+            logger.info(
                 f"Filtering out {n_filtered} cells with all-zero expression "
                 f"(out of {adata.n_obs} total cells)"
             )
@@ -257,8 +257,8 @@ class SCGPTModel(BaseEmbeddingModel):
         # Create model directory if it doesn't exist
         self.model_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"Downloading scGPT model to {self.model_dir}...")
-        print(f"Source: {SCGPT_MODEL_URL}")
+        logger.info(f"Downloading scGPT model to {self.model_dir}...")
+        logger.info(f"Source: {SCGPT_MODEL_URL}")
 
         try:
             # Set SSL certificate path for gdown (Ubuntu/Debian locations)
@@ -289,7 +289,7 @@ class SCGPTModel(BaseEmbeddingModel):
                     f"Expected files in {self.model_dir}: best_model.pt, args.json, vocab.json"
                 )
 
-            print(f"Model downloaded successfully to {self.model_dir}")
+            logger.info(f"Model downloaded successfully to {self.model_dir}")
         except Exception as e:
             raise RuntimeError(
                 f"Failed to download scGPT model: {e}\n"
@@ -303,7 +303,7 @@ class SCGPTModel(BaseEmbeddingModel):
         output_path: Path,
         batch_size: Optional[int] = None,
         **kwargs: Any,
-    ) -> np.ndarray:
+    ) -> sc.AnnData:
         """
         Generate scGPT embeddings.
 
@@ -323,6 +323,30 @@ class SCGPTModel(BaseEmbeddingModel):
             gene_symbols = self._get_gene_symbols(adata)
             adata.var["gene_symbols"] = gene_symbols
 
+        vocab_file = self.model_dir / "vocab.json"
+
+        if vocab_file.exists():
+            with open(vocab_file, "r") as f:
+                vocab = json.load(f)
+
+            # scGPT vocab keys are the gene symbols
+            vocab_genes = set(vocab.keys())
+
+            # Identify genes that are in the model vocabulary
+            common_genes = adata.var[adata.var["gene_symbols"].isin(vocab_genes)].index
+
+            # 3. Subset to these genes locally first
+            adata_safe = adata[:, common_genes].copy()
+
+            # 4. CRITICAL: Remove cells that are now empty due to this subset
+            sc.pp.filter_cells(adata_safe, min_counts=1)
+
+            logger.info(
+                f"Safety filter: Reduced from {adata.n_obs} to {adata_safe.n_obs} cells "
+                f"after intersecting with model vocabulary."
+            )
+            adata = adata_safe
+
         # Use provided batch_size or default
         effective_batch_size = batch_size or self.batch_size
 
@@ -334,6 +358,7 @@ class SCGPTModel(BaseEmbeddingModel):
             gene_col="gene_symbols",
             batch_size=effective_batch_size,
             device=self.device,
+            use_fast_transformer=False,
         )
 
         # Extract embeddings from obsm
@@ -349,19 +374,32 @@ class SCGPTModel(BaseEmbeddingModel):
         if isinstance(embeddings, torch.Tensor):
             embeddings = embeddings.cpu().numpy()
 
-        # Validate embeddings before returning
-        self.validate_embeddings(embeddings, adata.n_obs)
+        # Create barebones AnnData with embeddings in X and obs preserved
+        # Use obs from embedded_adata if available (may have filtered cells), otherwise use original
+        result_obs = (
+            embedded_adata.obs.copy()
+            if embedded_adata.n_obs == embeddings.shape[0]
+            else adata.obs.copy()
+        )
+        result_adata = sc.AnnData(
+            X=embeddings,
+            obs=result_obs,
+        )
+        # No var needed for embeddings
 
-        return embeddings
+        # Validate embeddings
+        self.validate_embeddings(result_adata)
 
-    def validate_embeddings(self, embeddings: np.ndarray, n_cells: int) -> None:
+        return result_adata
+
+    def validate_embeddings(self, adata: sc.AnnData) -> None:
         """
         Validate that embeddings have correct shape and properties.
 
         Overrides base class to add scGPT-specific validation.
         """
         # Call base class validation
-        super().validate_embeddings(embeddings, n_cells)
+        super().validate_embeddings(adata)
 
         # Additional scGPT-specific validation could go here if needed
         # For now, base validation is sufficient

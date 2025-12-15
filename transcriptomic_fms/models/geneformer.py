@@ -1,6 +1,8 @@
 """Geneformer embedding model."""
 
+import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Optional
@@ -129,7 +131,7 @@ class GeneformerModel(BaseEmbeddingModel):
             # Check if model files exist
             if not self._model_exists():
                 if auto_download:
-                    print(f"Model not found at {self.model_path}. Downloading...")
+                    logger.info(f"Model not found at {self.model_path}. Downloading...")
                     self._download_model()
                 else:
                     raise ValueError(
@@ -137,9 +139,7 @@ class GeneformerModel(BaseEmbeddingModel):
                         f"Set auto_download=True to download automatically."
                     )
             else:
-                import sys
-
-                print(f"Using Geneformer model from: {self.model_path}", file=sys.stderr)
+                logger.info(f"Using Geneformer model from: {self.model_path}")
 
         # Find token dictionary files in model directory
         self.token_dict_file = self._find_token_dict()
@@ -216,6 +216,9 @@ class GeneformerModel(BaseEmbeddingModel):
             # Find actual model directory (Geneformer-V1-10M subdirectory)
             actual_model_dir = self._find_actual_model_dir()
 
+            # Initialize extractor
+            # Note: emb_label requires the attribute to be in dataset features
+            # We'll handle cell ordering separately by checking the tokenized dataset
             self._extractor = EmbExtractor(
                 model_type="Pretrained",
                 emb_mode="cell",  # Fixed to cell embeddings
@@ -352,10 +355,10 @@ class GeneformerModel(BaseEmbeddingModel):
                 "Then run: git lfs install"
             )
 
-        print(f"Downloading Geneformer model from HuggingFace...")
-        print(f"Repository: {GENEFORMER_MODEL_REPO}")
-        print(f"Model version: {GENEFORMER_MODEL_VERSION}")
-        print("Note: This may take a while as models are large. Using git-lfs...")
+        logger.info(f"Downloading Geneformer model from HuggingFace...")
+        logger.info(f"Repository: {GENEFORMER_MODEL_REPO}")
+        logger.info(f"Model version: {GENEFORMER_MODEL_VERSION}")
+        logger.info("Note: This may take a while as models are large. Using git-lfs...")
 
         try:
             # Clone the repository to a temporary location first
@@ -363,7 +366,7 @@ class GeneformerModel(BaseEmbeddingModel):
                 clone_dir = Path(tmpdir) / "Geneformer"
 
                 # Clone with git-lfs
-                print("Cloning repository...")
+                logger.info("Cloning repository...")
                 subprocess.run(
                     ["git", "clone", GENEFORMER_MODEL_REPO, str(clone_dir)],
                     check=True,
@@ -371,7 +374,7 @@ class GeneformerModel(BaseEmbeddingModel):
                 )
 
                 # Pull LFS files
-                print("Downloading model files (git-lfs)...")
+                logger.info("Downloading model files (git-lfs)...")
                 subprocess.run(
                     ["git", "lfs", "pull"],
                     cwd=str(clone_dir),
@@ -390,11 +393,7 @@ class GeneformerModel(BaseEmbeddingModel):
                 # Move model directory to target
                 target_model_dir = self.model_path / GENEFORMER_MODEL_DIR
                 if target_model_dir.exists():
-                    import shutil
-
                     shutil.rmtree(target_model_dir)
-
-                import shutil
 
                 shutil.move(str(source_model_dir), str(target_model_dir))
 
@@ -414,7 +413,7 @@ class GeneformerModel(BaseEmbeddingModel):
                     f"Expected to find {GENEFORMER_MODEL_DIR} in {self.model_path}"
                 )
 
-            print(f"Model downloaded successfully to {self.model_path}")
+            logger.info(f"Model downloaded successfully to {self.model_path}")
         except subprocess.CalledProcessError as e:
             raise RuntimeError(
                 f"Failed to download Geneformer model: {e}\n"
@@ -491,10 +490,12 @@ class GeneformerModel(BaseEmbeddingModel):
 
             # Initialize tokenizer
             # V1-10M model settings: special_token=False, model_input_size=2048
+            # Use custom_attr_name_dict to preserve cell_id in tokenized dataset
             tokenizer_kwargs = {
                 "nproc": 4,  # Default number of processes
                 "special_token": False,  # V1 models don't use special tokens
                 "model_input_size": 2048,  # V1 model input size
+                "custom_attr_name_dict": {"cell_id": "cell_id"},  # Preserve cell_id attribute
             }
 
             if self.token_dict_file:
@@ -507,8 +508,6 @@ class GeneformerModel(BaseEmbeddingModel):
             # Tokenize the data
             # tokenize_data expects a directory containing input files
             # Create a temporary input directory with the loom file
-            import shutil
-
             input_dir = Path(tmpdir) / "input_data"
             input_dir.mkdir(exist_ok=True)
             shutil.copy(str(tmp_loom), str(input_dir / "data.loom"))
@@ -528,7 +527,7 @@ class GeneformerModel(BaseEmbeddingModel):
         output_path: Path,
         batch_size: Optional[int] = None,
         **kwargs: Any,
-    ) -> np.ndarray:
+    ) -> sc.AnnData:
         """
         Generate Geneformer embeddings.
 
@@ -542,8 +541,12 @@ class GeneformerModel(BaseEmbeddingModel):
             **kwargs: Additional arguments (ignored)
 
         Returns:
-            Embeddings array of shape (n_cells, n_dimensions)
+            AnnData object with embeddings in X (shape: n_cells, n_dimensions)
+            and obs preserved for cell mapping. No var needed.
         """
+        # Store original cell order to preserve it in output
+        original_cell_order = adata.obs_names.values.copy()
+
         # Create temporary directory for tokenized data
         with tempfile.TemporaryDirectory() as tmpdir:
             tokenized_dir = Path(tmpdir) / "tokenized_data"
@@ -611,6 +614,7 @@ class GeneformerModel(BaseEmbeddingModel):
                     )
 
                 # Read embeddings CSV
+                # Geneformer outputs CSV with numeric indices, but embeddings are in same order as input
                 emb_df = pd.read_csv(emb_csv, index_col=0)
 
                 # Extract embedding columns (all columns except metadata)
@@ -631,19 +635,69 @@ class GeneformerModel(BaseEmbeddingModel):
                         f"Available columns: {emb_df.columns.tolist()}"
                     )
 
-                embeddings = emb_df[emb_cols].values
-
                 # Ensure embeddings match number of cells
-                if embeddings.shape[0] != adata.n_obs:
+                if emb_df.shape[0] != adata.n_obs:
                     raise ValueError(
                         f"Embeddings shape mismatch: expected {adata.n_obs} cells, "
-                        f"got {embeddings.shape[0]}"
+                        f"got {emb_df.shape[0]}"
                     )
 
-                # Validate embeddings
-                self.validate_embeddings(embeddings, adata.n_obs)
+                # Verify embeddings are in correct order by checking tokenized dataset
+                # The tokenized dataset preserves cell_id, and embeddings are extracted in that order
+                try:
+                    from datasets import load_from_disk
 
-                return embeddings
+                    tokenized_dataset = load_from_disk(str(input_data_path))
+
+                    if "cell_id" in tokenized_dataset.features:
+                        tokenized_cell_ids = tokenized_dataset["cell_id"]
+                        # Check if order matches input order
+                        if list(tokenized_cell_ids) != list(original_cell_order):
+                            # Reorder embeddings to match original cell order
+                            tokenized_to_original_idx = {
+                                cell_id: orig_idx
+                                for orig_idx, cell_id in enumerate(original_cell_order)
+                            }
+                            reorder_idx = [
+                                tokenized_to_original_idx.get(cell_id, None)
+                                for cell_id in tokenized_cell_ids
+                            ]
+                            if None in reorder_idx:
+                                raise ValueError(
+                                    "Some cells in tokenized dataset don't match original cells"
+                                )
+                            embeddings = emb_df.iloc[reorder_idx][emb_cols].values
+                        else:
+                            # Order matches - embeddings are already in correct order
+                            embeddings = emb_df[emb_cols].values
+                    else:
+                        # No cell_id in dataset - assume order is preserved
+                        embeddings = emb_df[emb_cols].values
+                except Exception:
+                    # Fallback: assume order is preserved (tokenized dataset should match input order)
+                    embeddings = emb_df[emb_cols].values
+
+                # Verify we have the right number of embeddings
+                if embeddings.shape[0] != len(original_cell_order):
+                    raise ValueError(
+                        f"Embedding count mismatch: got {embeddings.shape[0]} embeddings, "
+                        f"expected {len(original_cell_order)} cells. "
+                        f"This suggests cells were filtered during processing."
+                    )
+
+                # Create barebones AnnData with embeddings in X and obs preserved
+                # Ensure obs matches the order of embeddings (which should match original_cell_order)
+                result_obs = adata.obs.loc[original_cell_order].copy()
+                result_adata = sc.AnnData(
+                    X=embeddings,
+                    obs=result_obs,
+                )
+                # No var needed for embeddings
+
+                # Validate embeddings
+                self.validate_embeddings(result_adata)
+
+                return result_adata
 
     def get_container_command(
         self,

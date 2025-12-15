@@ -1,5 +1,6 @@
 """SCimilarity embedding model."""
 
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -8,6 +9,9 @@ import scanpy as sc
 
 from transcriptomic_fms.models.base import BaseEmbeddingModel
 from transcriptomic_fms.models.registry import register_model
+from transcriptomic_fms.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 try:
     from scimilarity import CellEmbedding
@@ -127,7 +131,7 @@ class SCimilarityModel(BaseEmbeddingModel):
             # Check if model files exist
             if not self._model_exists():
                 if auto_download:
-                    print(f"Model not found at {self.model_path}. Downloading...")
+                    logger.info(f"Model not found at {self.model_path}. Downloading...")
                     self._download_model()
                 else:
                     raise ValueError(
@@ -135,9 +139,7 @@ class SCimilarityModel(BaseEmbeddingModel):
                         f"Set auto_download=True to download automatically."
                     )
             else:
-                import sys
-
-                print(f"Using SCimilarity model from: {self.model_path}", file=sys.stderr)
+                logger.info(f"Using SCimilarity model from: {self.model_path}")
 
         # Initialize model (will be done lazily in embed() if needed)
         self._model: Optional[CellEmbedding] = None
@@ -281,9 +283,9 @@ class SCimilarityModel(BaseEmbeddingModel):
         # Create model directory if it doesn't exist
         self.model_path.mkdir(parents=True, exist_ok=True)
 
-        print(f"Downloading SCimilarity model to {self.model_path}...")
-        print(f"Source: {SCIMILARITY_MODEL_URL}")
-        print("Note: This is a large file (~30GB). Download may take a while.")
+        logger.info(f"Downloading SCimilarity model to {self.model_path}...")
+        logger.info(f"Source: {SCIMILARITY_MODEL_URL}")
+        logger.info("Note: This is a large file (~30GB). Download may take a while.")
 
         try:
             # Download the model
@@ -307,7 +309,7 @@ class SCimilarityModel(BaseEmbeddingModel):
             print()  # New line after progress
 
             # Verify MD5 checksum
-            print("Verifying checksum...")
+            logger.info("Verifying checksum...")
             with open(tar_path, "rb") as f:
                 file_hash = hashlib.md5(f.read()).hexdigest()
 
@@ -318,10 +320,10 @@ class SCimilarityModel(BaseEmbeddingModel):
                     f"Download may be corrupted. Please try again."
                 )
 
-            print("Checksum verified.")
+            logger.info("Checksum verified.")
 
             # Extract the tarball
-            print("Extracting model files...")
+            logger.info("Extracting model files...")
             with tarfile.open(tar_path, "r:gz") as tar:
                 tar.extractall(path=self.model_path)
 
@@ -338,12 +340,12 @@ class SCimilarityModel(BaseEmbeddingModel):
             # Find and report the actual model path
             try:
                 actual_path = self._find_actual_model_path()
-                print(f"Model downloaded and extracted successfully.")
-                print(f"Model directory: {self.model_path}")
-                print(f"Actual model path: {actual_path}")
+                logger.info(f"Model downloaded and extracted successfully.")
+                logger.info(f"Model directory: {self.model_path}")
+                logger.info(f"Actual model path: {actual_path}")
             except ValueError:
                 # This shouldn't happen if _model_exists() returned True, but handle gracefully
-                print(f"Model downloaded and extracted to {self.model_path}")
+                logger.info(f"Model downloaded and extracted to {self.model_path}")
         except Exception as e:
             raise RuntimeError(
                 f"Failed to download SCimilarity model: {e}\n"
@@ -358,7 +360,7 @@ class SCimilarityModel(BaseEmbeddingModel):
         output_path: Path,
         batch_size: Optional[int] = None,
         **kwargs: Any,
-    ) -> np.ndarray:
+    ) -> sc.AnnData:
         """
         Generate SCimilarity embeddings.
 
@@ -369,7 +371,8 @@ class SCimilarityModel(BaseEmbeddingModel):
             **kwargs: Additional arguments (ignored)
 
         Returns:
-            Embeddings array of shape (n_cells, n_dimensions)
+            AnnData object with embeddings in X (shape: n_cells, n_dimensions)
+            and obs preserved for cell mapping. No var needed.
         """
         model = self._get_model()
 
@@ -381,19 +384,26 @@ class SCimilarityModel(BaseEmbeddingModel):
         if not isinstance(embeddings, np.ndarray):
             embeddings = np.array(embeddings)
 
-        # Validate embeddings before returning
-        self.validate_embeddings(embeddings, adata.n_obs)
+        # Create barebones AnnData with embeddings in X and obs preserved
+        result_adata = sc.AnnData(
+            X=embeddings,
+            obs=adata.obs.copy(),
+        )
+        # No var needed for embeddings
 
-        return embeddings
+        # Validate embeddings
+        self.validate_embeddings(result_adata)
 
-    def validate_embeddings(self, embeddings: np.ndarray, n_cells: int) -> None:
+        return result_adata
+
+    def validate_embeddings(self, adata: sc.AnnData) -> None:
         """
         Validate that embeddings have correct shape and properties.
 
         Overrides base class to add SCimilarity-specific validation.
         """
         # Call base class validation
-        super().validate_embeddings(embeddings, n_cells)
+        super().validate_embeddings(adata)
 
         # Additional SCimilarity-specific validation could go here if needed
         # For now, base validation is sufficient

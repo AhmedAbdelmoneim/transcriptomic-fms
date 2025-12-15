@@ -132,21 +132,22 @@ class BaseEmbeddingModel(ABC):
         output_path: Path,
         batch_size: Optional[int] = None,
         **kwargs: Any,
-    ) -> np.ndarray:
+    ) -> sc.AnnData:
         """
         Generate embeddings from preprocessed AnnData.
 
         This is the main method that should be implemented by each model.
-        It takes preprocessed AnnData and returns embeddings as a numpy array.
+        It takes preprocessed AnnData and returns an AnnData object with embeddings in X.
 
         Args:
             adata: Preprocessed AnnData object
-            output_path: Path where embeddings will be saved (.npy file)
+            output_path: Path where embeddings will be saved (.h5ad file)
             batch_size: Optional batch size for processing
             **kwargs: Model-specific parameters
 
         Returns:
-            Embeddings array of shape (n_cells, n_dimensions)
+            AnnData object with embeddings in X (shape: n_cells, n_dimensions)
+            and obs preserved for cell mapping. No var needed.
         """
         pass
 
@@ -206,29 +207,46 @@ class BaseEmbeddingModel(ABC):
             "  - var['gene_name'] column exists"
         )
 
-    def validate_embeddings(self, embeddings: np.ndarray, n_cells: int) -> None:
+    def validate_embeddings(self, adata: sc.AnnData) -> None:
         """
-        Validate that embeddings have correct shape and properties.
+        Validate that embeddings AnnData has correct shape and properties.
 
         Args:
-            embeddings: Embeddings array to validate
-            n_cells: Expected number of cells
+            adata: AnnData object with embeddings in X
 
         Raises:
             ValueError: If embeddings are invalid
         """
+        if not isinstance(adata, sc.AnnData):
+            raise ValueError("Embeddings must be an AnnData object")
+
+        embeddings = adata.X
+        if embeddings is None:
+            raise ValueError("AnnData.X is None - embeddings not found")
+
         if not isinstance(embeddings, np.ndarray):
-            raise ValueError("Embeddings must be a numpy array")
-        if embeddings.shape[0] != n_cells:
-            raise ValueError(
-                f"Embeddings shape mismatch: expected {n_cells} cells, got {embeddings.shape[0]}"
-            )
+            # Convert sparse to dense for validation
+            if hasattr(embeddings, "toarray"):
+                embeddings = embeddings.toarray()
+            else:
+                embeddings = np.array(embeddings)
+
         if embeddings.ndim != 2:
             raise ValueError(f"Embeddings must be 2D array, got shape {embeddings.shape}")
+
+        if embeddings.shape[0] != adata.n_obs:
+            raise ValueError(
+                f"Embeddings shape mismatch: expected {adata.n_obs} cells, got {embeddings.shape[0]}"
+            )
+
         if np.any(np.isnan(embeddings)):
             raise ValueError("Embeddings contain NaN values")
         if np.any(np.isinf(embeddings)):
             raise ValueError("Embeddings contain Inf values")
+
+        # Ensure obs is present for cell mapping
+        if adata.obs.empty:
+            raise ValueError("AnnData.obs is empty - cell metadata required for mapping")
 
     def get_container_command(
         self,
