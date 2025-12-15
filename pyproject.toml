@@ -43,6 +43,11 @@ geneformer = [
     "geneformer @ git+https://huggingface.co/ctheodoris/Geneformer",
     "loompy",
 ]
+scconcept = [
+    "scconcept @ git+https://github.com/theislab/scConcept.git@main",
+    "lamin_dataloader @ git+https://github.com/theislab/lamin_dataloader.git",
+    "flash-attn==2.7.*",
+]
 
 [project.scripts]
 transcriptomic-fms = "transcriptomic_fms.cli.main:main"
