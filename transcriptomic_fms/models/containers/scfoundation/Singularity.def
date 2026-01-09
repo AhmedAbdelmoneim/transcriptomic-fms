@@ -1,0 +1,90 @@
+Bootstrap: docker
+From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
+
+%files
+    pyproject.toml /transcriptomic-fms/
+    README.md /transcriptomic-fms/
+    transcriptomic_fms /transcriptomic-fms/transcriptomic_fms
+
+%labels
+    Author "Ahmed Sallam"
+    Version "0.1.0"
+    Description "scFoundation Container (PyTorch + CUDA Support)"
+
+%post
+    # 1. System Dependency Installation
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update && apt-get install -y \
+        python3 \
+        python3-pip \
+        python3-dev \
+        git \
+        build-essential \
+        wget \
+        pkg-config \
+        tzdata \
+        curl
+
+    ln -s /usr/bin/python3 /usr/bin/python
+    pip3 install --upgrade pip setuptools wheel packaging
+
+    # 2. Patch pyproject.toml to allow Python 3.10 inside container
+    sed -i 's/requires-python = ">=3.11"/requires-python = ">=3.10"/g' /transcriptomic-fms/pyproject.toml
+    sed -i "s/requires-python = '>=3.11'/requires-python = '>=3.10'/g" /transcriptomic-fms/pyproject.toml
+
+    # 3. Install PyTorch with CUDA 12.1 support
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+    # 4. Core scientific stack
+    pip install "numpy" "pandas" "scanpy" "anndata" "scipy" "scikit-learn"
+    pip install "requests" "tqdm" "h5py" "tables" "psutil"
+    pip install "einops"
+
+    # 5. Install local_attention (required by scFoundation)
+    # Note: local_attention may need to be built from source
+    pip install "local-attention" || pip install git+https://github.com/lucidrains/local-attention.git
+
+    # 6. Clone scFoundation repository
+    # Users should provide the model checkpoint and gene index file
+    mkdir -p /transcriptomic-fms/scFoundation
+    cd /transcriptomic-fms/scFoundation
+    git clone --depth 1 https://github.com/biomap-research/scFoundation.git . || echo "scFoundation repo clone failed - user should provide model code"
+
+    # 7. Project tooling & utilities
+    pip install "ipython" "jupyterlab" "matplotlib" "notebook" "python-dotenv" "ruff"
+
+    # 8. Install our package (editable, no dependency resolution)
+    cd /transcriptomic-fms
+    pip install --no-deps --ignore-requires-python -e .
+
+    # 9. Create standard directories
+    mkdir -p /transcriptomic-fms/data
+    mkdir -p /transcriptomic-fms/output
+    mkdir -p /transcriptomic-fms/models
+    mkdir -p /transcriptomic-fms/scFoundation/model
+
+    # 10. Note: Users must provide:
+    #     - Model checkpoint: /transcriptomic-fms/models/models.ckpt
+    #     - Gene index: /transcriptomic-fms/scFoundation/model/OS_scRNA_gene_index.19264.tsv
+
+    # 11. Final Verification
+    echo "=== VERSION CHECK ==="
+    pip list | grep -E "torch|numpy|scanpy|einops|pandas"
+
+%environment
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+    export DEBIAN_FRONTEND=noninteractive
+
+    export CUDA_HOME=/usr/local/cuda
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64
+    export PYTHONPATH="/transcriptomic-fms:/transcriptomic-fms/scFoundation:$PYTHONPATH"
+    export PYTHONUNBUFFERED=1
+    export PYTHONNOUSERSITE=1
+
+    export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+    export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+    export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
+%runscript
+    exec python -m transcriptomic_fms.cli.main "$@"
