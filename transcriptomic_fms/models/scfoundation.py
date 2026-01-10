@@ -114,10 +114,10 @@ class SCFoundationModel(BaseEmbeddingModel):
             # Try to import by adding common paths
             try:
                 import sys
-                from pathlib import Path
 
                 # Try to find scFoundation in common locations
                 # The model files (load.py, pretrainmodels.py) are in the model/ subdirectory
+                # Path is already imported at module level
                 potential_paths = [
                     Path(__file__).parent.parent.parent / "scFoundation" / "model",
                     Path.cwd() / "scFoundation" / "model",
