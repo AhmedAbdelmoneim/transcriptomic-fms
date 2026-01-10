@@ -414,11 +414,10 @@ class SCFoundationModel(BaseEmbeddingModel):
         else:
             X_df = pd.DataFrame(adata.X, index=adata.obs_names, columns=gene_symbols)
 
-        # Select genes to match scFoundation's 19264 gene list
-        if X_df.shape[1] < 19264:
-            logger.info("Converting gene features to match 19264 gene list")
-            X_df, to_fill_columns, var = self._main_gene_selection(X_df, self.gene_list)
-            assert X_df.shape[1] >= 19264
+        # Match genes to scFoundation's 19264 gene list (reorder, select, pad as needed)
+        logger.info("Converting gene features to match scFoundation's 19264 gene list")
+        X_df, to_fill_columns, var = self._main_gene_selection(X_df, self.gene_list)
+        assert X_df.shape[1] == len(self.gene_list) == 19264
 
         # Update AnnData with selected genes
         adata = sc.AnnData(X_df.values, obs=adata.obs.copy(), var=var)
@@ -493,6 +492,7 @@ class SCFoundationModel(BaseEmbeddingModel):
         pretrainmodel, pretrainconfig = self._load_model()
 
         # Convert AnnData to DataFrame format expected by scFoundation
+        # Data should already be preprocessed to match 19264 gene list
         if hasattr(adata.X, "toarray"):
             gexpr_feature = pd.DataFrame(
                 adata.X.toarray(), index=adata.obs_names, columns=adata.var_names
@@ -502,13 +502,13 @@ class SCFoundationModel(BaseEmbeddingModel):
                 adata.X, index=adata.obs_names, columns=adata.var_names
             )
 
-        # Ensure we have 19264 genes
-        if gexpr_feature.shape[1] < 19264:
-            logger.info("Converting gene features to match 19264 gene list")
-            gexpr_feature, to_fill_columns, var = self._main_gene_selection(
-                gexpr_feature, self.gene_list
+        # Verify gene list matches (should have been done in preprocess)
+        if gexpr_feature.shape[1] != len(self.gene_list) or list(gexpr_feature.columns) != self.gene_list:
+            raise ValueError(
+                f"Data must be preprocessed to match scFoundation's 19264 gene list. "
+                f"Got {gexpr_feature.shape[1]} genes, expected {len(self.gene_list)}. "
+                f"Call model.preprocess() first."
             )
-            assert gexpr_feature.shape[1] >= 19264
 
         # Normalize for bulk if needed
         if (self.pre_normalized == "F") and (self.output_type == "cell"):
