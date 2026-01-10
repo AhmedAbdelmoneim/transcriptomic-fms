@@ -479,7 +479,8 @@ class SCFoundationModel(BaseEmbeddingModel):
         Args:
             adata: Preprocessed AnnData object (must match 19264 gene list).
             output_path: Path where embeddings will be saved.
-            batch_size: Batch size for processing (currently processes one cell at a time).
+            batch_size: Batch size for processing cells (default: 32 for cell embeddings, 1 for gene embeddings).
+                       Smaller batches reduce GPU memory usage.
             **kwargs: Additional keyword arguments (unused for now).
 
         Returns:
@@ -510,10 +511,16 @@ class SCFoundationModel(BaseEmbeddingModel):
                 f"Call model.preprocess() first."
             )
 
-        # Normalize for bulk if needed
-        if (self.pre_normalized == "F") and (self.output_type == "cell"):
-            # For single cell, normalization happens per cell in the loop
-            pass
+        # Determine batch size
+        # Process cells one at a time (variable-length sequences), but clear GPU cache periodically
+        # batch_size here controls how often we clear GPU cache (every N cells)
+        if batch_size is None:
+            if self.output_type == "cell":
+                batch_size = 8  # Clear GPU cache every 8 cells for cell embeddings
+            else:
+                batch_size = 1  # Gene embeddings need more memory, clear after each cell
+        else:
+            batch_size = max(1, int(batch_size))  # Ensure at least 1
 
         geneexpemb = []
         batchcontainer = []
@@ -521,149 +528,186 @@ class SCFoundationModel(BaseEmbeddingModel):
         logger.info(
             f"Extracting scFoundation embeddings "
             f"(output_type={self.output_type}, version={self.version}, "
-            f"device={self.device})..."
+            f"device={self.device}, batch_size={batch_size})..."
         )
 
-        # Process each cell
-        for i in tqdm(range(gexpr_feature.shape[0])):
+        num_cells = gexpr_feature.shape[0]
+        
+        # Process cells in batches
+        for batch_start in tqdm(range(0, num_cells, batch_size)):
+            batch_end = min(batch_start + batch_size, num_cells)
+            batch_indices = range(batch_start, batch_end)
+            
             with torch.no_grad():
-                # Single cell processing
-                if self.pre_normalized == "F":
-                    tmpdata = (
-                        np.log1p(gexpr_feature.iloc[i, :] / (gexpr_feature.iloc[i, :].sum()) * 1e4)
-                    ).tolist()
-                elif self.pre_normalized == "T":
-                    tmpdata = (gexpr_feature.iloc[i, :]).tolist()
-                elif self.pre_normalized == "A":
-                    tmpdata = (gexpr_feature.iloc[i, :-1]).tolist()
-                else:
-                    raise ValueError(f"pre_normalized must be T, F or A, got '{self.pre_normalized}'")
-
-                if self.pre_normalized == "A":
-                    totalcount = gexpr_feature.iloc[i, -1]
-                else:
-                    totalcount = gexpr_feature.iloc[i, :].sum()
-
-                # Select resolution based on tgthighres
-                if self.tgthighres[0] == "f":
-                    pretrain_gene_x = torch.tensor(
-                        tmpdata
-                        + [
-                            np.log10(totalcount * float(self.tgthighres[1:])),
-                            np.log10(totalcount),
-                        ]
-                    ).unsqueeze(0)
-                elif self.tgthighres[0] == "a":
-                    pretrain_gene_x = torch.tensor(
-                        tmpdata
-                        + [
-                            np.log10(totalcount) + float(self.tgthighres[1:]),
-                            np.log10(totalcount),
-                        ]
-                    ).unsqueeze(0)
-                elif self.tgthighres[0] == "t":
-                    pretrain_gene_x = torch.tensor(
-                        tmpdata + [float(self.tgthighres[1:]), np.log10(totalcount)]
-                    ).unsqueeze(0)
-                else:
-                    raise ValueError(
-                        f"tgthighres must start with f, a or t, got '{self.tgthighres}'"
-                    )
-
-                pretrain_gene_x = pretrain_gene_x.to(self.device)
-                data_gene_ids = torch.arange(19266, device=pretrain_gene_x.device).repeat(
-                    pretrain_gene_x.shape[0], 1
-                )
-
-                value_labels = pretrain_gene_x > 0
-                x, x_padding = gatherData(pretrain_gene_x, value_labels, pretrainconfig["pad_token_id"])
-
-                # Cell embedding
-                if self.output_type == "cell":
-                    position_gene_ids, _ = gatherData(
-                        data_gene_ids, value_labels, pretrainconfig["pad_token_id"]
-                    )
-                    x = pretrainmodel.token_emb(torch.unsqueeze(x, 2).float(), output_weight=0)
-                    position_emb = pretrainmodel.pos_emb(position_gene_ids)
-                    x += position_emb
-                    geneemb = pretrainmodel.encoder(x, x_padding)
-
-                    geneemb1 = geneemb[:, -1, :]
-                    geneemb2 = geneemb[:, -2, :]
-                    geneemb3, _ = torch.max(geneemb[:, :-2, :], dim=1)
-                    geneemb4 = torch.mean(geneemb[:, :-2, :], dim=1)
-                    if self.pool_type == "all":
-                        geneembmerge = torch.concat([geneemb1, geneemb2, geneemb3, geneemb4], axis=1)
-                    elif self.pool_type == "max":
-                        geneembmerge, _ = torch.max(geneemb, dim=1)
+                # Process batch of cells
+                batch_pretrain_gene_x = []
+                batch_data_gene_ids = []
+                
+                for i in batch_indices:
+                    # Single cell preprocessing
+                    if self.pre_normalized == "F":
+                        tmpdata = (
+                            np.log1p(gexpr_feature.iloc[i, :] / (gexpr_feature.iloc[i, :].sum()) * 1e4)
+                        ).tolist()
+                    elif self.pre_normalized == "T":
+                        tmpdata = (gexpr_feature.iloc[i, :]).tolist()
+                    elif self.pre_normalized == "A":
+                        tmpdata = (gexpr_feature.iloc[i, :-1]).tolist()
                     else:
-                        raise ValueError(f"pool_type must be all or max, got '{self.pool_type}'")
-                    geneexpemb.append(geneembmerge.detach().cpu().numpy())
+                        raise ValueError(f"pre_normalized must be T, F or A, got '{self.pre_normalized}'")
 
-                # Gene embedding
+                    if self.pre_normalized == "A":
+                        totalcount = gexpr_feature.iloc[i, -1]
+                    else:
+                        totalcount = gexpr_feature.iloc[i, :].sum()
+
+                    # Select resolution based on tgthighres
+                    if self.tgthighres[0] == "f":
+                        pretrain_gene_x = torch.tensor(
+                            tmpdata
+                            + [
+                                np.log10(totalcount * float(self.tgthighres[1:])),
+                                np.log10(totalcount),
+                            ]
+                        ).unsqueeze(0)
+                    elif self.tgthighres[0] == "a":
+                        pretrain_gene_x = torch.tensor(
+                            tmpdata
+                            + [
+                                np.log10(totalcount) + float(self.tgthighres[1:]),
+                                np.log10(totalcount),
+                            ]
+                        ).unsqueeze(0)
+                    elif self.tgthighres[0] == "t":
+                        pretrain_gene_x = torch.tensor(
+                            tmpdata + [float(self.tgthighres[1:]), np.log10(totalcount)]
+                        ).unsqueeze(0)
+                    else:
+                        raise ValueError(
+                            f"tgthighres must start with f, a or t, got '{self.tgthighres}'"
+                        )
+
+                    batch_pretrain_gene_x.append(pretrain_gene_x)
+                    data_gene_ids = torch.arange(19266, dtype=torch.long).unsqueeze(0)
+                    batch_data_gene_ids.append(data_gene_ids)
+
+                # Cell embedding (process each cell, clear GPU cache periodically)
+                if self.output_type == "cell":
+                    # Process cells one at a time (variable-length sequences)
+                    batch_embeddings = []
+                    for cell_idx, (pretrain_gene_x, data_gene_ids) in enumerate(zip(batch_pretrain_gene_x, batch_data_gene_ids)):
+                        pretrain_gene_x = pretrain_gene_x.to(self.device)
+                        data_gene_ids = data_gene_ids.to(self.device)
+                        
+                        value_labels = pretrain_gene_x > 0
+                        x, x_padding = gatherData(pretrain_gene_x, value_labels, pretrainconfig["pad_token_id"])
+                        
+                        position_gene_ids, _ = gatherData(
+                            data_gene_ids, value_labels, pretrainconfig["pad_token_id"]
+                        )
+                        x = pretrainmodel.token_emb(torch.unsqueeze(x, 2).float(), output_weight=0)
+                        position_emb = pretrainmodel.pos_emb(position_gene_ids)
+                        x += position_emb
+                        geneemb = pretrainmodel.encoder(x, x_padding)
+
+                        geneemb1 = geneemb[:, -1, :]
+                        geneemb2 = geneemb[:, -2, :]
+                        geneemb3, _ = torch.max(geneemb[:, :-2, :], dim=1)
+                        geneemb4 = torch.mean(geneemb[:, :-2, :], dim=1)
+                        if self.pool_type == "all":
+                            geneembmerge = torch.concat([geneemb1, geneemb2, geneemb3, geneemb4], axis=1)
+                        elif self.pool_type == "max":
+                            geneembmerge, _ = torch.max(geneemb, dim=1)
+                        else:
+                            raise ValueError(f"pool_type must be all or max, got '{self.pool_type}'")
+                        
+                        # Move to CPU immediately and free GPU memory
+                        batch_embeddings.append(geneembmerge.detach().cpu().numpy())
+                        
+                        # Explicitly delete intermediate tensors
+                        del x, x_padding, position_gene_ids, position_emb, geneemb
+                        del geneemb1, geneemb2, geneemb3, geneemb4, geneembmerge
+                        del pretrain_gene_x, data_gene_ids, value_labels
+                    
+                    geneexpemb.extend(batch_embeddings)
+                    del batch_pretrain_gene_x, batch_data_gene_ids, batch_embeddings
+
+                # Gene embedding (process one at a time due to memory constraints)
                 elif self.output_type == "gene":
-                    pretrainmodel.to_final = None
-                    (
-                        encoder_data,
-                        encoder_position_gene_ids,
-                        encoder_data_padding,
-                        encoder_labels,
-                        decoder_data,
-                        decoder_data_padding,
-                        new_data_raw,
-                        data_mask_labels,
-                        decoder_position_gene_ids,
-                    ) = getEncoerDecoderData(pretrain_gene_x.float(), pretrain_gene_x.float(), pretrainconfig)
-                    out = pretrainmodel.forward(
-                        x=encoder_data,
-                        padding_label=encoder_data_padding,
-                        encoder_position_gene_ids=encoder_position_gene_ids,
-                        encoder_labels=encoder_labels,
-                        decoder_data=decoder_data,
-                        mask_gene_name=False,
-                        mask_labels=None,
-                        decoder_position_gene_ids=decoder_position_gene_ids,
-                        decoder_data_padding_labels=decoder_data_padding,
-                    )
-                    out = out[:, :19264, :].contiguous()
-                    geneexpemb.append(out.detach().cpu().numpy())
+                    for pretrain_gene_x in batch_pretrain_gene_x:
+                        pretrain_gene_x = pretrain_gene_x.to(self.device)
+                        pretrainmodel.to_final = None
+                        (
+                            encoder_data,
+                            encoder_position_gene_ids,
+                            encoder_data_padding,
+                            encoder_labels,
+                            decoder_data,
+                            decoder_data_padding,
+                            new_data_raw,
+                            data_mask_labels,
+                            decoder_position_gene_ids,
+                        ) = getEncoerDecoderData(pretrain_gene_x.float(), pretrain_gene_x.float(), pretrainconfig)
+                        out = pretrainmodel.forward(
+                            x=encoder_data,
+                            padding_label=encoder_data_padding,
+                            encoder_position_gene_ids=encoder_position_gene_ids,
+                            encoder_labels=encoder_labels,
+                            decoder_data=decoder_data,
+                            mask_gene_name=False,
+                            mask_labels=None,
+                            decoder_position_gene_ids=decoder_position_gene_ids,
+                            decoder_data_padding_labels=decoder_data_padding,
+                        )
+                        out = out[:, :19264, :].contiguous()
+                        geneexpemb.append(out.detach().cpu().numpy())
+                        
+                        # Clear intermediate tensors
+                        del pretrain_gene_x, encoder_data, encoder_position_gene_ids
+                        del encoder_data_padding, encoder_labels, decoder_data
+                        del decoder_data_padding, new_data_raw, data_mask_labels
+                        del decoder_position_gene_ids, out
 
                 # Gene batch embedding
                 elif self.output_type == "gene_batch":
-                    batchcontainer.append(pretrain_gene_x.float())
-                    if len(batchcontainer) == gexpr_feature.shape[0]:
+                    for pretrain_gene_x in batch_pretrain_gene_x:
+                        batchcontainer.append(pretrain_gene_x.float())
+                    
+                    if len(batchcontainer) >= num_cells:
                         batchcontainer = torch.concat(batchcontainer, axis=0)
-                    else:
-                        continue
-                    pretrainmodel.to_final = None
-                    (
-                        encoder_data,
-                        encoder_position_gene_ids,
-                        encoder_data_padding,
-                        encoder_labels,
-                        decoder_data,
-                        decoder_data_padding,
-                        new_data_raw,
-                        data_mask_labels,
-                        decoder_position_gene_ids,
-                    ) = getEncoerDecoderData(batchcontainer, batchcontainer, pretrainconfig)
-                    out = pretrainmodel.forward(
-                        x=encoder_data,
-                        padding_label=encoder_data_padding,
-                        encoder_position_gene_ids=encoder_position_gene_ids,
-                        encoder_labels=encoder_labels,
-                        decoder_data=decoder_data,
-                        mask_gene_name=False,
-                        mask_labels=None,
-                        decoder_position_gene_ids=decoder_position_gene_ids,
-                        decoder_data_padding_labels=decoder_data_padding,
-                    )
-                    geneexpemb = out[:, :19264, :].contiguous().detach().cpu().numpy()
+                        pretrainmodel.to_final = None
+                        (
+                            encoder_data,
+                            encoder_position_gene_ids,
+                            encoder_data_padding,
+                            encoder_labels,
+                            decoder_data,
+                            decoder_data_padding,
+                            new_data_raw,
+                            data_mask_labels,
+                            decoder_position_gene_ids,
+                        ) = getEncoerDecoderData(batchcontainer.to(self.device), batchcontainer.to(self.device), pretrainconfig)
+                        out = pretrainmodel.forward(
+                            x=encoder_data,
+                            padding_label=encoder_data_padding,
+                            encoder_position_gene_ids=encoder_position_gene_ids,
+                            encoder_labels=encoder_labels,
+                            decoder_data=decoder_data,
+                            mask_gene_name=False,
+                            mask_labels=None,
+                            decoder_position_gene_ids=decoder_position_gene_ids,
+                            decoder_data_padding_labels=decoder_data_padding,
+                        )
+                        geneexpemb = out[:, :19264, :].contiguous().detach().cpu().numpy()
                 else:
                     raise ValueError(
                         f"output_type must be one of 'cell', 'gene', 'gene_batch', "
                         f"got '{self.output_type}'"
                     )
+                
+                # Clear GPU cache periodically to free memory
+                if self.device == "cuda":
+                    torch.cuda.empty_cache()
 
         # Convert to numpy array
         if isinstance(geneexpemb, list):
