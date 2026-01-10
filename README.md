@@ -204,6 +204,72 @@ make hpc-embed-interactive MODEL=scconcept \
 - scConcept expects Ensembl-style gene IDs via `var['gene_id']` (or `var['ensembl_id']` / index, which are normalized during preprocessing).
 - FlashAttention (`flash-attn==2.7.*`) is installed and compiled inside the scConcept container against CUDA 12.1 (via `nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04`), matching the CUDA runtime exposed on the HPC cluster through `apptainer --nv`.
 
+### scFoundation
+
+scFoundation: foundation model for single-cell transcriptomics ([GitHub](https://github.com/biomap-research/scFoundation)).
+
+**Installation (local, optional):**
+```bash
+make install-model MODEL=scfoundation
+# or
+uv sync --extra scfoundation
+```
+
+**Prerequisites:**
+1. **Model Checkpoint**: Download the pre-trained model checkpoint manually from SharePoint:
+   - URL: https://hopebio2020.sharepoint.com/:f:/s/PublicSharedfiles/IgBlEJ72TBE5Q76AmgXbgjXiAR69fzcrgzqgUYdSThPLrqk
+   - Place at: `models/scfoundation/models/models.ckpt` (or specify path via `--model-path`)
+
+**Arguments:**
+- `--model-path <path>`: Path to model checkpoint file (default: `models/scfoundation/models/models.ckpt`)
+- `--ckpt-name <str>`: Checkpoint name (default: `01B-resolution`)
+- `--gene-index-path <path>`: Path to gene index file `OS_scRNA_gene_index.19264.tsv` (auto-downloads if not provided)
+- `--device <str>`: `cuda` or `cpu` (auto-detects if not specified)
+- `--output-type <str>`: Output type - `cell`, `gene`, or `gene_batch` (default: `cell`)
+- `--pool-type <str>`: Pooling type for cell embeddings - `all` or `max` (default: `all`, only valid when `output-type=cell`)
+- `--tgthighres <str>`: Target high resolution token - `t<number>`, `f<number>`, or `a<number>` (default: `t4`)
+  - `t<number>`: targeted high resolution (T=number)
+  - `f<number>`: fold change (T/S=number)
+  - `a<number>`: addition (T=S+number)
+- `--pre-normalized <str>`: Whether input is pre-normalized - `F`, `T`, or `A` (default: `F`)
+- `--version <str>`: Model version - `ce` (cell embedding) or `rde` (read depth enhancement) (default: `ce`, only valid when `output-type=cell`)
+- `--auto-download <bool>`: Auto-download gene index file if not found (default: `true`)
+- `--download-dir <path>`: Directory for downloads (default: `models/scfoundation`)
+
+**Examples (local):**
+```bash
+# Auto-download gene index, use default model path
+make embed MODEL=scfoundation INPUT=data/test.h5ad OUTPUT=output/embeddings.h5ad \
+    MODEL_ARGS="--device cuda"
+
+# Specify custom model checkpoint and gene index paths
+make embed MODEL=scfoundation INPUT=data/test.h5ad OUTPUT=output/embeddings.h5ad \
+    MODEL_ARGS="--device cuda --model-path /path/to/models.ckpt --gene-index-path /path/to/gene_index.tsv"
+
+# Generate gene embeddings instead of cell embeddings
+make embed MODEL=scfoundation INPUT=data/test.h5ad OUTPUT=output/embeddings.h5ad \
+    MODEL_ARGS="--output-type gene --device cuda"
+```
+
+**HPC container:**
+```bash
+# Build container (clones scFoundation repo and installs dependencies)
+module load apptainer
+make build-container MODEL=scfoundation
+
+# Interactive test
+make hpc-embed-interactive MODEL=scfoundation \
+    INPUT=data/test.h5ad \
+    OUTPUT=output/embeddings.h5ad \
+    MODEL_ARGS="--device cuda --model-path models/scfoundation/models/models.ckpt"
+
+# Batch job
+make hpc-embed MODEL=scfoundation \
+    INPUT=data/test.h5ad \
+    OUTPUT=output/embeddings.h5ad \
+    MODEL_ARGS="--device cuda --model-path models/scfoundation/models/models.ckpt"
+```
+
 ## HPC Deployment
 
 ### Building Containers
@@ -213,6 +279,8 @@ module load apptainer
 make build-container MODEL=scgpt
 make build-container MODEL=scimilarity
 make build-container MODEL=geneformer
+make build-container MODEL=scfoundation
+make build-container MODEL=scconcept
 ```
 
 ### Container Updates

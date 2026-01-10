@@ -47,8 +47,21 @@ From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
     # 6. Clone scFoundation repository
     # Users should provide the model checkpoint and gene index file
     mkdir -p /transcriptomic-fms/scFoundation
-    cd /transcriptomic-fms/scFoundation
-    git clone --depth 1 https://github.com/biomap-research/scFoundation.git . || echo "scFoundation repo clone failed - user should provide model code"
+    cd /transcriptomic-fms
+    git clone --depth 1 https://github.com/biomap-research/scFoundation.git scFoundation || {
+        echo "ERROR: scFoundation repo clone failed"
+        echo "Please check network connectivity or clone manually"
+        exit 1
+    }
+    # Verify model directory exists with required files
+    if [ ! -f "/transcriptomic-fms/scFoundation/model/load.py" ] || [ ! -f "/transcriptomic-fms/scFoundation/model/pretrainmodels.py" ]; then
+        echo "WARNING: scFoundation model files not found after clone"
+        echo "Expected files: /transcriptomic-fms/scFoundation/model/load.py"
+        echo "               /transcriptomic-fms/scFoundation/model/pretrainmodels.py"
+        echo "This may cause import errors. Please verify the repository structure."
+    else
+        echo "✓ scFoundation model files found successfully"
+    fi
 
     # 7. Project tooling & utilities
     pip install "ipython" "jupyterlab" "matplotlib" "notebook" "python-dotenv" "ruff"
@@ -78,7 +91,8 @@ From: nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
     export CUDA_HOME=/usr/local/cuda
     export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64
-    export PYTHONPATH="/transcriptomic-fms:/transcriptomic-fms/scFoundation:$PYTHONPATH"
+    # Add scFoundation and its model directory to PYTHONPATH for imports
+    export PYTHONPATH="/transcriptomic-fms:/transcriptomic-fms/scFoundation:/transcriptomic-fms/scFoundation/model:$PYTHONPATH"
     export PYTHONUNBUFFERED=1
     export PYTHONNOUSERSITE=1
 
