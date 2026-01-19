@@ -303,7 +303,7 @@ sbatch --time=8:00:00 --mem=128G transcriptomic_fms/hpc/run_job.sh embed ...
 ## Data Requirements
 
 All models require AnnData objects (`.h5ad` files) with gene identifiers:
-- **Most models**: Gene symbols in `var.index`, `var['gene_symbols']`, `var['feature_name']`, or `var['gene_name']`
+- **Most models**: Gene symbols in `var['gene_symbol']` (preferred, singular), `var['gene_symbols']` (plural), `var.index`, `var['feature_name']`, or `var['gene_name']`
 - **Geneformer**: Requires Ensembl IDs in `var.index` or `var['ensembl_id']` column
 
 ## Architecture

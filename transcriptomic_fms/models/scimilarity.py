@@ -200,8 +200,9 @@ class SCimilarityModel(BaseEmbeddingModel):
 
         Requirements:
         - Gene symbols must be available either as:
+          * var['gene_symbol'] column (preferred, singular)
+          * var['gene_symbols'] column (plural, backward compatibility)
           * var.index (gene symbols as index)
-          * var['gene_symbols'] column
           * var['feature_name'] column (common in some formats)
           * var['gene_name'] column (fallback)
         - Data should be raw counts (not log-normalized)
