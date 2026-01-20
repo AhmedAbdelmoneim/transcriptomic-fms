@@ -650,22 +650,26 @@ class GeneformerModel(BaseEmbeddingModel):
                     tokenized_dataset = load_from_disk(str(input_data_path))
 
                     if "cell_id" in tokenized_dataset.features:
-                        tokenized_cell_ids = tokenized_dataset["cell_id"]
+                        tokenized_cell_ids = list(tokenized_dataset["cell_id"])
                         # Check if order matches input order
-                        if list(tokenized_cell_ids) != list(original_cell_order):
+                        if tokenized_cell_ids != list(original_cell_order):
                             # Reorder embeddings to match original cell order
-                            tokenized_to_original_idx = {
-                                cell_id: orig_idx
-                                for orig_idx, cell_id in enumerate(original_cell_order)
+                            # Create mapping: cell_id -> position in tokenized dataset
+                            tokenized_idx_map = {
+                                cell_id: idx for idx, cell_id in enumerate(tokenized_cell_ids)
                             }
-                            reorder_idx = [
-                                tokenized_to_original_idx.get(cell_id, None)
-                                for cell_id in tokenized_cell_ids
-                            ]
-                            if None in reorder_idx:
-                                raise ValueError(
-                                    "Some cells in tokenized dataset don't match original cells"
-                                )
+                            
+                            # For each cell in original order, find its position in tokenized dataset
+                            reorder_idx = []
+                            for cell_id in original_cell_order:
+                                if cell_id not in tokenized_idx_map:
+                                    raise ValueError(
+                                        f"Cell {cell_id} from original data not found in tokenized dataset. "
+                                        "This suggests cells were filtered during tokenization."
+                                    )
+                                reorder_idx.append(tokenized_idx_map[cell_id])
+                            
+                            # Reorder embeddings dataframe using indices from tokenized order
                             embeddings = emb_df.iloc[reorder_idx][emb_cols].values
                         else:
                             # Order matches - embeddings are already in correct order
