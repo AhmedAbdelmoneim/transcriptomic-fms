@@ -162,8 +162,9 @@ class SCGPTModel(BaseEmbeddingModel):
 
         Requirements:
         - Gene symbols must be available either as:
+          * var['gene_symbol'] column (preferred, singular)
+          * var['gene_symbols'] column (plural, backward compatibility)
           * var.index (gene symbols as index)
-          * var['gene_symbols'] column
           * var['gene_name'] column (fallback)
 
         Args:

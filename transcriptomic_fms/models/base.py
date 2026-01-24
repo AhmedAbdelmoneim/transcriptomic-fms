@@ -171,10 +171,11 @@ class BaseEmbeddingModel(ABC):
         Extract gene symbols from AnnData.
 
         Checks in order:
-        1. var['gene_symbols'] column
-        2. var['feature_name'] column
-        3. var['gene_name'] column
-        4. var.index (assumes index contains gene symbols)
+        1. var['gene_symbol'] column (preferred, singular)
+        2. var['gene_symbols'] column (plural, for backward compatibility)
+        3. var['feature_name'] column
+        4. var['gene_name'] column
+        5. var.index (assumes index contains gene symbols)
 
         Returns:
             List of gene symbols
@@ -182,7 +183,11 @@ class BaseEmbeddingModel(ABC):
         Raises:
             ValueError: If gene symbols cannot be determined
         """
-        # Check for gene_symbols column
+        # Check for gene_symbol column (preferred, singular)
+        if "gene_symbol" in adata.var.columns:
+            return adata.var["gene_symbol"].tolist()
+
+        # Check for gene_symbols column (plural, backward compatibility)
         if "gene_symbols" in adata.var.columns:
             return adata.var["gene_symbols"].tolist()
 
@@ -201,8 +206,9 @@ class BaseEmbeddingModel(ABC):
         raise ValueError(
             "Cannot determine gene symbols. "
             "Please ensure one of the following:\n"
-            "  - var.index contains gene symbols\n"
+            "  - var['gene_symbol'] column exists (preferred)\n"
             "  - var['gene_symbols'] column exists\n"
+            "  - var.index contains gene symbols\n"
             "  - var['feature_name'] column exists\n"
             "  - var['gene_name'] column exists"
         )

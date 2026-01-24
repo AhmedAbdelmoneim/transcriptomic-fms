@@ -529,175 +529,102 @@ class GeneformerModel(BaseEmbeddingModel):
         **kwargs: Any,
     ) -> sc.AnnData:
         """
-        Generate Geneformer embeddings.
-
-        This method tokenizes the data (if not already tokenized) and then
-        extracts embeddings using EmbExtractor.
-
-        Args:
-            adata: Preprocessed AnnData object
-            output_path: Path where embeddings will be saved
-            batch_size: Batch size for forward pass (overrides default if provided)
-            **kwargs: Additional arguments (ignored)
-
-        Returns:
-            AnnData object with embeddings in X (shape: n_cells, n_dimensions)
-            and obs preserved for cell mapping. No var needed.
+        Generate Geneformer embeddings (Robust implementation).
         """
-        # Store original cell order to preserve it in output
-        original_cell_order = adata.obs_names.values.copy()
-
-        # Create temporary directory for tokenized data
+        # 1. Tokenize (preserves cell_id in the .dataset)
         with tempfile.TemporaryDirectory() as tmpdir:
             tokenized_dir = Path(tmpdir) / "tokenized_data"
             tokenized_dir.mkdir()
-
-            # Tokenize data
+            
             logger.info("Tokenizing data for Geneformer...")
             tokenized_data_dir = self._tokenize_data(adata, tokenized_dir)
-
-            # The tokenizer creates a .dataset directory (HuggingFace Dataset format)
-            # The output is: {output_dir}/{output_prefix}.dataset/
-            # Check what was actually created
+            
+            # Locate the .dataset directory (Geneformer/HuggingFace format)
             tokenized_contents = list(tokenized_data_dir.iterdir())
-
-            # Look for .dataset directory - this is what extract_embs expects
-            dataset_dirs = [
-                d for d in tokenized_contents if d.is_dir() and d.name.endswith(".dataset")
-            ]
+            dataset_dirs = [d for d in tokenized_contents if d.is_dir() and d.name.endswith(".dataset")]
+            
             if dataset_dirs:
-                # Found .dataset directory - extract_embs expects the path to this directory
-                dataset_dir = dataset_dirs[0]
-                input_data_path = str(dataset_dir)  # Path to the .dataset directory itself
+                input_data_path = str(dataset_dirs[0])
+            elif any(d.is_dir() for d in tokenized_contents):
+                # Fallback: assume the first directory is the dataset
+                input_data_path = str([d for d in tokenized_contents if d.is_dir()][0])
             else:
-                # Check if tokenized_data_dir itself is structured as a dataset
-                # Or look for any subdirectory
-                if any(d.is_dir() for d in tokenized_contents):
-                    # Try using the first subdirectory
-                    dataset_dir = [d for d in tokenized_contents if d.is_dir()][0]
-                    input_data_path = str(dataset_dir)
-                else:
-                    raise RuntimeError(
-                        f"Tokenized dataset not found in expected format. "
-                        f"Contents of {tokenized_data_dir}: {[str(p.name) for p in tokenized_contents]}. "
-                        "Expected a .dataset directory or dataset structure."
-                    )
+                 raise RuntimeError("Could not find valid tokenized dataset directory.")
 
-            # Get extractor
+            # 2. Extract Embeddings
             extractor = self._get_extractor()
-
-            # Override batch size if provided
             if batch_size is not None:
                 extractor.forward_batch_size = batch_size
-
-            # Find actual model directory
+            
             actual_model_dir = self._find_actual_model_dir()
-
-            # Extract embeddings
-            # extract_embs expects input_data_file to be a directory containing the dataset
-            logger.info("Extracting embeddings with Geneformer...")
+            
+            logger.info("Extracting embeddings...")
             with tempfile.TemporaryDirectory() as emb_output_dir:
                 extractor.extract_embs(
                     model_directory=str(actual_model_dir),
-                    input_data_file=input_data_path,  # Directory containing the dataset
+                    input_data_file=input_data_path,
                     output_directory=emb_output_dir,
                     output_prefix="embeddings",
-                    output_torch_embs=False,  # We'll load from CSV
+                    output_torch_embs=False,
                 )
-
-                # Load embeddings from CSV
+                
                 emb_csv = Path(emb_output_dir) / "embeddings.csv"
                 if not emb_csv.exists():
-                    raise RuntimeError(
-                        f"Embeddings file not found: {emb_csv}. "
-                        "Check that extract_embs completed successfully."
-                    )
-
-                # Read embeddings CSV
-                # Geneformer outputs CSV with numeric indices, but embeddings are in same order as input
+                    raise RuntimeError("Embeddings CSV not generated.")
+                
+                # Load embeddings
                 emb_df = pd.read_csv(emb_csv, index_col=0)
-
-                # Extract embedding columns (all columns except metadata)
-                # Embedding columns are typically named 'emb_0', 'emb_1', etc.
-                emb_cols = [col for col in emb_df.columns if col.startswith("emb_")]
+                
+                # Identify embedding columns (usually emb_0, emb_1...)
+                emb_cols = [c for c in emb_df.columns if c.startswith("emb_")]
                 if not emb_cols:
-                    # Try to find numeric columns (embeddings)
-                    emb_cols = [
-                        col
-                        for col in emb_df.columns
-                        if emb_df[col].dtype in [np.float64, np.float32]
-                        and col not in ["n_counts", "filter_pass"]
-                    ]
+                    emb_cols = [c for c in emb_df.columns 
+                              if emb_df[c].dtype in [np.float64, np.float32] 
+                              and c not in ["n_counts", "filter_pass"]]
+                
+                embeddings = emb_df[emb_cols].values
 
-                if not emb_cols:
-                    raise ValueError(
-                        "Could not identify embedding columns in output CSV. "
-                        f"Available columns: {emb_df.columns.tolist()}"
-                    )
-
-                # Ensure embeddings match number of cells
-                if emb_df.shape[0] != adata.n_obs:
-                    raise ValueError(
-                        f"Embeddings shape mismatch: expected {adata.n_obs} cells, "
-                        f"got {emb_df.shape[0]}"
-                    )
-
-                # Verify embeddings are in correct order by checking tokenized dataset
-                # The tokenized dataset preserves cell_id, and embeddings are extracted in that order
+                # 3. ROBUST ALIGNMENT STRATEGY
+                # Load the tokenized dataset to get the exact order of cells that survived
                 try:
                     from datasets import load_from_disk
-
                     tokenized_dataset = load_from_disk(str(input_data_path))
-
-                    if "cell_id" in tokenized_dataset.features:
-                        tokenized_cell_ids = tokenized_dataset["cell_id"]
-                        # Check if order matches input order
-                        if list(tokenized_cell_ids) != list(original_cell_order):
-                            # Reorder embeddings to match original cell order
-                            tokenized_to_original_idx = {
-                                cell_id: orig_idx
-                                for orig_idx, cell_id in enumerate(original_cell_order)
-                            }
-                            reorder_idx = [
-                                tokenized_to_original_idx.get(cell_id, None)
-                                for cell_id in tokenized_cell_ids
-                            ]
-                            if None in reorder_idx:
-                                raise ValueError(
-                                    "Some cells in tokenized dataset don't match original cells"
-                                )
-                            embeddings = emb_df.iloc[reorder_idx][emb_cols].values
-                        else:
-                            # Order matches - embeddings are already in correct order
-                            embeddings = emb_df[emb_cols].values
-                    else:
-                        # No cell_id in dataset - assume order is preserved
-                        embeddings = emb_df[emb_cols].values
-                except Exception:
-                    # Fallback: assume order is preserved (tokenized dataset should match input order)
-                    embeddings = emb_df[emb_cols].values
-
-                # Verify we have the right number of embeddings
-                if embeddings.shape[0] != len(original_cell_order):
-                    raise ValueError(
-                        f"Embedding count mismatch: got {embeddings.shape[0]} embeddings, "
-                        f"expected {len(original_cell_order)} cells. "
-                        f"This suggests cells were filtered during processing."
+                    
+                    if "cell_id" not in tokenized_dataset.features:
+                        raise ValueError("Tokenized dataset missing 'cell_id' feature.")
+                        
+                    # These are the IDs of the cells that actually have embeddings
+                    surviving_cell_ids = tokenized_dataset["cell_id"]
+                    
+                    # Sanity check: ensure embedding rows match survivor count
+                    if len(surviving_cell_ids) != embeddings.shape[0]:
+                        raise ValueError(
+                            f"Shape mismatch: {len(surviving_cell_ids)} surviving cells "
+                            f"vs {embeddings.shape[0]} embedding rows."
+                        )
+                        
+                    # Create the result AnnData by slicing the original obs
+                    # This implicitly handles reordering AND filtering in one step
+                    result_obs = adata.obs.loc[surviving_cell_ids].copy()
+                    
+                    result_adata = sc.AnnData(
+                        X=embeddings,
+                        obs=result_obs
                     )
+                    
+                    # Log dropped cells so the user knows
+                    n_dropped = adata.n_obs - result_adata.n_obs
+                    if n_dropped > 0:
+                        logger.warning(
+                            f"Geneformer filtered out {n_dropped} cells "
+                            f"({(n_dropped/adata.n_obs)*100:.1f}%) due to low token counts."
+                        )
+                        
+                    return result_adata
 
-                # Create barebones AnnData with embeddings in X and obs preserved
-                # Ensure obs matches the order of embeddings (which should match original_cell_order)
-                result_obs = adata.obs.loc[original_cell_order].copy()
-                result_adata = sc.AnnData(
-                    X=embeddings,
-                    obs=result_obs,
-                )
-                # No var needed for embeddings
-
-                # Validate embeddings
-                self.validate_embeddings(result_adata)
-
-                return result_adata
+                except Exception as e:
+                    logger.error(f"Failed to align embeddings with metadata: {e}")
+                    raise e
 
     def get_container_command(
         self,
