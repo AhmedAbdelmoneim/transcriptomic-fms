@@ -178,6 +178,10 @@ def embed_command(args: argparse.Namespace, model_args: dict[str, Any]) -> None:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Allow writing nullable strings
+    import anndata
+    anndata.settings.allow_write_nullable_strings = True  # type: ignore
+
     # Load AnnData
     logger.info(f"Loading AnnData from {input_path}...")
     adata = sc.read_h5ad(input_path)
