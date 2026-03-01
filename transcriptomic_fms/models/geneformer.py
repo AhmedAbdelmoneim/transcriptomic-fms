@@ -221,13 +221,14 @@ class GeneformerModel(BaseEmbeddingModel):
             # We'll handle cell ordering separately by checking the tokenized dataset
             self._extractor = EmbExtractor(
                 model_type="Pretrained",
-                emb_mode="cell",  # Fixed to cell embeddings
-                max_ncells=None,  # Process all cells
+                emb_mode="cell",
+                max_ncells=None,
                 forward_batch_size=self.batch_size,
-                nproc=4,  # Default number of processes
-                emb_layer=-1,  # 2nd to last layer (fixed)
-                model_version=GENEFORMER_MODEL_VERSION,  # "V1" or "V2"
+                nproc=4,
+                emb_layer=-1,
+                model_version=GENEFORMER_MODEL_VERSION,
                 token_dictionary_file=str(self.token_dict_file) if self.token_dict_file else None,
+                emb_label=["cell_id"],  # attach cell_id to each row so we can align after sort
             )
         return self._extractor
 
@@ -574,60 +575,35 @@ class GeneformerModel(BaseEmbeddingModel):
                 if not emb_csv.exists():
                     raise RuntimeError("Embeddings CSV not generated.")
 
-                # Load embeddings
-                emb_df = pd.read_csv(emb_csv, index_col=0)
+            emb_df = pd.read_csv(emb_csv, index_col=0)
 
-                # Identify embedding columns (usually emb_0, emb_1...)
-                emb_cols = [c for c in emb_df.columns if c.startswith("emb_")]
-                if not emb_cols:
-                    emb_cols = [
-                        c
-                        for c in emb_df.columns
-                        if emb_df[c].dtype in [np.float64, np.float32]
-                        and c not in ["n_counts", "filter_pass"]
-                    ]
+            # Identify non-embedding columns (cell_id and any other metadata Geneformer appends)
+            meta_cols = {"cell_id", "n_counts", "filter_pass"}
+            emb_cols = [c for c in emb_df.columns if c not in meta_cols]
 
-                embeddings = emb_df[emb_cols].values
+            if "cell_id" not in emb_df.columns:
+                raise RuntimeError(
+                    "cell_id column missing from embeddings CSV. "
+                    "Ensure cell_id is preserved during tokenization and emb_label=['cell_id'] is set."
+                )
 
-                # 3. ROBUST ALIGNMENT STRATEGY
-                # Load the tokenized dataset to get the exact order of cells that survived
-                try:
-                    from datasets import load_from_disk
+            # emb_df rows are in Geneformer's internal sort order (sorted by token length).
+            # cell_id column carries the original identity for each row — use it to realign.
+            surviving_cell_ids = emb_df["cell_id"].tolist()
+            embeddings = emb_df[emb_cols].values
 
-                    tokenized_dataset = load_from_disk(str(input_data_path))
+            n_dropped = adata.n_obs - len(surviving_cell_ids)
+            if n_dropped > 0:
+                logger.warning(
+                    f"Geneformer filtered out {n_dropped} cells "
+                    f"({(n_dropped / adata.n_obs) * 100:.1f}%) due to low token counts."
+                )
 
-                    if "cell_id" not in tokenized_dataset.features:
-                        raise ValueError("Tokenized dataset missing 'cell_id' feature.")
-
-                    # These are the IDs of the cells that actually have embeddings
-                    surviving_cell_ids = tokenized_dataset["cell_id"]
-
-                    # Sanity check: ensure embedding rows match survivor count
-                    if len(surviving_cell_ids) != embeddings.shape[0]:
-                        raise ValueError(
-                            f"Shape mismatch: {len(surviving_cell_ids)} surviving cells "
-                            f"vs {embeddings.shape[0]} embedding rows."
-                        )
-
-                    # Create the result AnnData by slicing the original obs
-                    # This implicitly handles reordering AND filtering in one step
-                    result_obs = adata.obs.loc[surviving_cell_ids].copy()
-
-                    result_adata = sc.AnnData(X=embeddings, obs=result_obs)
-
-                    # Log dropped cells so the user knows
-                    n_dropped = adata.n_obs - result_adata.n_obs
-                    if n_dropped > 0:
-                        logger.warning(
-                            f"Geneformer filtered out {n_dropped} cells "
-                            f"({(n_dropped / adata.n_obs) * 100:.1f}%) due to low token counts."
-                        )
-
-                    return result_adata
-
-                except Exception as e:
-                    logger.error(f"Failed to align embeddings with metadata: {e}")
-                    raise e
+            # Slice original obs to get surviving cells in embedding order,
+            # preserving all original obs columns.
+            result_obs = adata.obs.loc[surviving_cell_ids].copy()
+            result_adata = sc.AnnData(X=embeddings, obs=result_obs)
+            return result_adata
 
     def get_container_command(
         self,
