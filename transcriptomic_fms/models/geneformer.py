@@ -573,37 +573,47 @@ class GeneformerModel(BaseEmbeddingModel):
 
                 emb_csv = Path(emb_output_dir) / "embeddings.csv"
                 if not emb_csv.exists():
-                    raise RuntimeError("Embeddings CSV not generated.")
+                    actual_contents = [p.name for p in Path(emb_output_dir).iterdir()]
+                    raise RuntimeError(
+                        f"Embeddings CSV not found at {emb_csv}. "
+                        f"Actual contents of output dir: {actual_contents}"
+                    )
 
-            emb_df = pd.read_csv(emb_csv, index_col=0)
+                emb_df = pd.read_csv(emb_csv, index_col=0)
 
-            # Identify non-embedding columns (cell_id and any other metadata Geneformer appends)
-            meta_cols = {"cell_id", "n_counts", "filter_pass"}
-            emb_cols = [c for c in emb_df.columns if c not in meta_cols]
+                # Validate precondition before using cell_id
+                if "cell_id" not in emb_df.columns:
+                    raise RuntimeError(
+                        "cell_id column missing from embeddings CSV. "
+                        "Ensure cell_id is preserved during tokenization and emb_label=['cell_id'] is set."
+                    )
 
-            if "cell_id" not in emb_df.columns:
-                raise RuntimeError(
-                    "cell_id column missing from embeddings CSV. "
-                    "Ensure cell_id is preserved during tokenization and emb_label=['cell_id'] is set."
-                )
+                # Identify embedding columns by excluding known metadata columns.
+                # Note: Geneformer's default DataFrame uses integer column names (0, 1, 2...)
+                # which become strings after CSV round-trip, so meta_cols uses string keys.
+                meta_cols = {"cell_id", "n_counts", "filter_pass"}
+                emb_cols = [c for c in emb_df.columns if c not in meta_cols]
 
-            # emb_df rows are in Geneformer's internal sort order (sorted by token length).
-            # cell_id column carries the original identity for each row — use it to realign.
-            surviving_cell_ids = emb_df["cell_id"].tolist()
-            embeddings = emb_df[emb_cols].values
+                # emb_df rows are in Geneformer's internal sort order (sorted by token length
+                # via downsample_and_sort). cell_id column carries the original identity for
+                # each row — use it to realign with the input adata.
+                surviving_cell_ids = emb_df["cell_id"].tolist()
+                embeddings = emb_df[emb_cols].values
 
-            n_dropped = adata.n_obs - len(surviving_cell_ids)
-            if n_dropped > 0:
-                logger.warning(
-                    f"Geneformer filtered out {n_dropped} cells "
-                    f"({(n_dropped / adata.n_obs) * 100:.1f}%) due to low token counts."
-                )
+        # Both temp dirs are now cleaned up; only plain objects remain.
+        n_dropped = adata.n_obs - len(surviving_cell_ids)
+        if n_dropped > 0:
+            logger.warning(
+                f"Geneformer filtered out {n_dropped} cells "
+                f"({(n_dropped / adata.n_obs) * 100:.1f}%) due to low token counts."
+            )
 
-            # Slice original obs to get surviving cells in embedding order,
-            # preserving all original obs columns.
-            result_obs = adata.obs.loc[surviving_cell_ids].copy()
-            result_adata = sc.AnnData(X=embeddings, obs=result_obs)
-            return result_adata
+        # Slice original obs to get surviving cells in embedding order,
+        # preserving all original obs columns.
+        result_obs = adata.obs.loc[surviving_cell_ids].copy()
+        result_adata = sc.AnnData(X=embeddings, obs=result_obs)
+        return result_adata
+
 
     def get_container_command(
         self,
