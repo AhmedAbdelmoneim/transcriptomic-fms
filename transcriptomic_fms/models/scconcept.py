@@ -189,6 +189,7 @@ class SCConceptModel(BaseEmbeddingModel):
             f"(model={self.pretrained_model_name}, device={self.device})..."
         )
 
+        kwargs.pop("device", None)
         result = concept_model.extract_embeddings(
             adata=adata,
             gene_id_column=gene_id_column,

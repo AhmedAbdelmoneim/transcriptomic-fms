@@ -183,6 +183,10 @@ class BaseEmbeddingModel(ABC):
         Raises:
             ValueError: If gene symbols cannot be determined
         """
+        # Check for feature_name column (common in some formats)
+        if "feature_name" in adata.var.columns:
+            return adata.var["feature_name"].tolist()
+
         # Check for gene_symbol column (preferred, singular)
         if "gene_symbol" in adata.var.columns:
             return adata.var["gene_symbol"].tolist()
@@ -190,10 +194,6 @@ class BaseEmbeddingModel(ABC):
         # Check for gene_symbols column (plural, backward compatibility)
         if "gene_symbols" in adata.var.columns:
             return adata.var["gene_symbols"].tolist()
-
-        # Check for feature_name column (common in some formats)
-        if "feature_name" in adata.var.columns:
-            return adata.var["feature_name"].tolist()
 
         # Check for gene_name column (common alternative)
         if "gene_name" in adata.var.columns:
