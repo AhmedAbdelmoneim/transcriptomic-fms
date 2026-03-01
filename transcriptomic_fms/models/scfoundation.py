@@ -225,7 +225,10 @@ class SCFoundationModel(BaseEmbeddingModel):
             # Look for gene index in common locations
             potential_paths = [
                 self.model_path.parent / "OS_scRNA_gene_index.19264.tsv",
-                Path(__file__).parent.parent.parent / "scFoundation" / "model" / "OS_scRNA_gene_index.19264.tsv",
+                Path(__file__).parent.parent.parent
+                / "scFoundation"
+                / "model"
+                / "OS_scRNA_gene_index.19264.tsv",
                 Path.cwd() / "OS_scRNA_gene_index.19264.tsv",
                 Path.cwd() / "scFoundation" / "model" / "OS_scRNA_gene_index.19264.tsv",
             ]
@@ -414,9 +417,7 @@ class SCFoundationModel(BaseEmbeddingModel):
 
         # Create DataFrame with cells as rows and genes as columns
         if hasattr(adata.X, "toarray"):
-            X_df = pd.DataFrame(
-                adata.X.toarray(), index=adata.obs_names, columns=gene_symbols
-            )
+            X_df = pd.DataFrame(adata.X.toarray(), index=adata.obs_names, columns=gene_symbols)
         else:
             X_df = pd.DataFrame(adata.X, index=adata.obs_names, columns=gene_symbols)
 
@@ -505,9 +506,7 @@ class SCFoundationModel(BaseEmbeddingModel):
 
         num_cells, num_genes = X.shape
         if num_genes != 19264:
-            raise ValueError(
-                f"Data must have 19264 genes after preprocessing, got {num_genes}."
-            )
+            raise ValueError(f"Data must have 19264 genes after preprocessing, got {num_genes}.")
 
         if batch_size is None:
             batch_size = 64 if self.output_type == "cell" else 1
@@ -542,7 +541,9 @@ class SCFoundationModel(BaseEmbeddingModel):
                     batch_proc = batch[:, :-1]
                     totalcounts = batch[:, -1:]
                 else:
-                    raise ValueError(f"pre_normalized must be T, F or A, got '{self.pre_normalized}'")
+                    raise ValueError(
+                        f"pre_normalized must be T, F or A, got '{self.pre_normalized}'"
+                    )
 
                 if self.tgthighres[0] == "f":
                     hr = np.log10(totalcounts * float(self.tgthighres[1:]))
@@ -566,7 +567,9 @@ class SCFoundationModel(BaseEmbeddingModel):
                 # -----------------------
                 value_labels = batch_full > 0
                 x, x_padding = gatherData(batch_full, value_labels, pretrainconfig["pad_token_id"])
-                pos_ids, _ = gatherData(batch_gene_ids, value_labels, pretrainconfig["pad_token_id"])
+                pos_ids, _ = gatherData(
+                    batch_gene_ids, value_labels, pretrainconfig["pad_token_id"]
+                )
 
                 x = pretrainmodel.token_emb(torch.unsqueeze(x, 2), output_weight=0)
                 x = x + pretrainmodel.pos_emb(pos_ids)

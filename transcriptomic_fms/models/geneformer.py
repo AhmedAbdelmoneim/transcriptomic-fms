@@ -535,29 +535,31 @@ class GeneformerModel(BaseEmbeddingModel):
         with tempfile.TemporaryDirectory() as tmpdir:
             tokenized_dir = Path(tmpdir) / "tokenized_data"
             tokenized_dir.mkdir()
-            
+
             logger.info("Tokenizing data for Geneformer...")
             tokenized_data_dir = self._tokenize_data(adata, tokenized_dir)
-            
+
             # Locate the .dataset directory (Geneformer/HuggingFace format)
             tokenized_contents = list(tokenized_data_dir.iterdir())
-            dataset_dirs = [d for d in tokenized_contents if d.is_dir() and d.name.endswith(".dataset")]
-            
+            dataset_dirs = [
+                d for d in tokenized_contents if d.is_dir() and d.name.endswith(".dataset")
+            ]
+
             if dataset_dirs:
                 input_data_path = str(dataset_dirs[0])
             elif any(d.is_dir() for d in tokenized_contents):
                 # Fallback: assume the first directory is the dataset
                 input_data_path = str([d for d in tokenized_contents if d.is_dir()][0])
             else:
-                 raise RuntimeError("Could not find valid tokenized dataset directory.")
+                raise RuntimeError("Could not find valid tokenized dataset directory.")
 
             # 2. Extract Embeddings
             extractor = self._get_extractor()
             if batch_size is not None:
                 extractor.forward_batch_size = batch_size
-            
+
             actual_model_dir = self._find_actual_model_dir()
-            
+
             logger.info("Extracting embeddings...")
             with tempfile.TemporaryDirectory() as emb_output_dir:
                 extractor.extract_embs(
@@ -567,59 +569,60 @@ class GeneformerModel(BaseEmbeddingModel):
                     output_prefix="embeddings",
                     output_torch_embs=False,
                 )
-                
+
                 emb_csv = Path(emb_output_dir) / "embeddings.csv"
                 if not emb_csv.exists():
                     raise RuntimeError("Embeddings CSV not generated.")
-                
+
                 # Load embeddings
                 emb_df = pd.read_csv(emb_csv, index_col=0)
-                
+
                 # Identify embedding columns (usually emb_0, emb_1...)
                 emb_cols = [c for c in emb_df.columns if c.startswith("emb_")]
                 if not emb_cols:
-                    emb_cols = [c for c in emb_df.columns 
-                              if emb_df[c].dtype in [np.float64, np.float32] 
-                              and c not in ["n_counts", "filter_pass"]]
-                
+                    emb_cols = [
+                        c
+                        for c in emb_df.columns
+                        if emb_df[c].dtype in [np.float64, np.float32]
+                        and c not in ["n_counts", "filter_pass"]
+                    ]
+
                 embeddings = emb_df[emb_cols].values
 
                 # 3. ROBUST ALIGNMENT STRATEGY
                 # Load the tokenized dataset to get the exact order of cells that survived
                 try:
                     from datasets import load_from_disk
+
                     tokenized_dataset = load_from_disk(str(input_data_path))
-                    
+
                     if "cell_id" not in tokenized_dataset.features:
                         raise ValueError("Tokenized dataset missing 'cell_id' feature.")
-                        
+
                     # These are the IDs of the cells that actually have embeddings
                     surviving_cell_ids = tokenized_dataset["cell_id"]
-                    
+
                     # Sanity check: ensure embedding rows match survivor count
                     if len(surviving_cell_ids) != embeddings.shape[0]:
                         raise ValueError(
                             f"Shape mismatch: {len(surviving_cell_ids)} surviving cells "
                             f"vs {embeddings.shape[0]} embedding rows."
                         )
-                        
+
                     # Create the result AnnData by slicing the original obs
                     # This implicitly handles reordering AND filtering in one step
                     result_obs = adata.obs.loc[surviving_cell_ids].copy()
-                    
-                    result_adata = sc.AnnData(
-                        X=embeddings,
-                        obs=result_obs
-                    )
-                    
+
+                    result_adata = sc.AnnData(X=embeddings, obs=result_obs)
+
                     # Log dropped cells so the user knows
                     n_dropped = adata.n_obs - result_adata.n_obs
                     if n_dropped > 0:
                         logger.warning(
                             f"Geneformer filtered out {n_dropped} cells "
-                            f"({(n_dropped/adata.n_obs)*100:.1f}%) due to low token counts."
+                            f"({(n_dropped / adata.n_obs) * 100:.1f}%) due to low token counts."
                         )
-                        
+
                     return result_adata
 
                 except Exception as e:

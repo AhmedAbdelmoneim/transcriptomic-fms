@@ -4,8 +4,11 @@ import argparse
 from pathlib import Path
 import sys
 from typing import Any
+import gc
+import shutil
 
 import scanpy as sc
+import anndata as ad
 
 from transcriptomic_fms.models import get_model, list_models
 from transcriptomic_fms.utils.logging import get_logger, setup_logging
@@ -179,37 +182,80 @@ def embed_command(args: argparse.Namespace, model_args: dict[str, Any]) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Allow writing nullable strings
-    import anndata
-    anndata.settings.allow_write_nullable_strings = True  # type: ignore
+    ad.settings.allow_write_nullable_strings = True  # type: ignore
 
-    # Load AnnData
-    logger.info(f"Loading AnnData from {input_path}...")
-    adata = sc.read_h5ad(input_path)
-    logger.info(f"Loaded: {adata.shape}")
-
-    # Preprocess
-    logger.info("Preprocessing data...")
-    adata = model.preprocess(adata)
-
-    # Generate embeddings (pass batch_size if provided)
+    # Setup kwargs
     embed_kwargs = {}
     if hasattr(args, "batch_size") and args.batch_size is not None:
         embed_kwargs["batch_size"] = args.batch_size
-
-    # Also pass any model args that might be for embed() method
     embed_kwargs.update(model_args)
 
-    logger.info(f"Generating embeddings with {args.model}...")
-    result_adata = model.embed(adata, output_path, **embed_kwargs)
+    # Chunked Execution Path
+    if hasattr(args, "chunk_size") and args.chunk_size is not None:
+        logger.info(f"Loading AnnData from {input_path} in backed mode...")
+        adata_backed = sc.read_h5ad(input_path, backed="r")
+        n_obs = adata_backed.n_obs
+        logger.info(f"Loaded: {adata_backed.shape}. Processing in chunks of {args.chunk_size}...")
 
-    # Validate
-    logger.info("Validating embeddings...")
-    model.validate_embeddings(result_adata)
+        temp_dir = output_dir / f"tmp_chunking_{base_name}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        chunk_files = []
 
-    # Save
-    logger.info(f"Saving embeddings to {output_path}...")
-    result_adata.write(output_path)
-    logger.info(f"Done! Embeddings shape: {result_adata.shape}")
+        for start_idx in range(0, n_obs, args.chunk_size):
+            end_idx = min(start_idx + args.chunk_size, n_obs)
+            logger.info(f"Processing chunk {start_idx} to {end_idx}...")
+
+            # Extract chunk to memory
+            chunk_adata = adata_backed[start_idx:end_idx].to_memory()
+
+            # Preprocess and Embed
+            chunk_adata = model.preprocess(chunk_adata)
+            chunk_file = temp_dir / f"chunk_{start_idx}_{end_idx}.h5ad"
+            chunk_result = model.embed(chunk_adata, chunk_file, **embed_kwargs)
+
+            # Ensure model.embed saves the chunk if it didn't automatically
+            if not chunk_file.exists():
+                chunk_result.write(chunk_file)
+
+            chunk_files.append(chunk_file)
+
+            # Purge memory
+            del chunk_adata
+            del chunk_result
+            gc.collect()
+
+        logger.info("Concatenating embedded chunks...")
+        loaded_chunks = [sc.read_h5ad(f) for f in chunk_files]
+        result_adata = ad.concat(loaded_chunks, join="outer")
+
+        logger.info("Validating embeddings...")
+        model.validate_embeddings(result_adata)
+
+        logger.info(f"Saving combined embeddings to {output_path}...")
+        result_adata.write(output_path)
+
+        logger.info("Cleaning up temporary files...")
+        shutil.rmtree(temp_dir)
+        logger.info(f"Done! Embeddings shape: {result_adata.shape}")
+
+    # Standard Execution Path
+    else:
+        logger.info(f"Loading AnnData from {input_path}...")
+        adata = sc.read_h5ad(input_path)
+        logger.info(f"Loaded: {adata.shape}")
+
+        logger.info("Preprocessing data...")
+        adata = model.preprocess(adata)
+
+        logger.info(f"Generating embeddings with {args.model}...")
+        result_adata = model.embed(adata, output_path, **embed_kwargs)
+
+        logger.info("Validating embeddings...")
+        model.validate_embeddings(result_adata)
+
+        logger.info(f"Saving embeddings to {output_path}...")
+        result_adata.write(output_path)
+        logger.info(f"Done! Embeddings shape: {result_adata.shape}")
 
 
 def list_command(args: argparse.Namespace) -> None:
@@ -293,6 +339,12 @@ def main() -> None:
         "--output", required=True, type=Path, help="Output embeddings file (.h5ad)"
     )
     embed_parser.add_argument("--batch-size", type=int, help="Batch size for processing")
+    embed_parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=None,
+        help="Process data out-of-core in chunks of this size to manage memory",
+    )
     embed_parser.set_defaults(func=embed_command)
 
     # List command
@@ -317,7 +369,7 @@ def main() -> None:
 
     # For embed command, parse model-specific arguments
     if args.command == "embed":
-        known_arg_names = ["--model", "--input", "--output", "--batch-size"]
+        known_arg_names = ["--model", "--input", "--output", "--batch-size", "--chunk-size"]
         model_args = _parse_model_args(known_arg_names, unknown)
         args.func(args, model_args)
     else:

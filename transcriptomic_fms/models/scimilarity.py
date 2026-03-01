@@ -318,7 +318,7 @@ class SCimilarityModel(BaseEmbeddingModel):
                 tar_path.unlink()  # Remove corrupted file
                 raise RuntimeError(
                     f"MD5 checksum mismatch. Expected {SCIMILARITY_MODEL_MD5}, got {file_hash}. "
-                    f"Download may be corrupted. Please try again."
+                    "Download may be corrupted. Please try again."
                 )
 
             logger.info("Checksum verified.")
@@ -341,7 +341,7 @@ class SCimilarityModel(BaseEmbeddingModel):
             # Find and report the actual model path
             try:
                 actual_path = self._find_actual_model_path()
-                logger.info(f"Model downloaded and extracted successfully.")
+                logger.info("Model downloaded and extracted successfully.")
                 logger.info(f"Model directory: {self.model_path}")
                 logger.info(f"Actual model path: {actual_path}")
             except ValueError:
@@ -352,7 +352,7 @@ class SCimilarityModel(BaseEmbeddingModel):
                 f"Failed to download SCimilarity model: {e}\n"
                 f"You can manually download from: {SCIMILARITY_MODEL_URL}\n"
                 f"Extract to: {self.model_path}\n"
-                f"Or set model_path to point to an existing model directory."
+                "Or set model_path to point to an existing model directory."
             ) from e
 
     def embed(
