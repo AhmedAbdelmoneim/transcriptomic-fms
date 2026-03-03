@@ -464,7 +464,7 @@ class GeneformerModel(BaseEmbeddingModel):
             # Ensure all attributes are numpy arrays
             row_attrs = {"ensembl_id": np.array(gene_names)}
             col_attrs = {
-                "cell_id": np.array(cell_names),
+                "cell_id": np.array(cell_names, dtype=str),  # force string regardless of index type
                 "n_counts": np.array(adata.obs["n_counts"].values),
             }
 
@@ -597,7 +597,7 @@ class GeneformerModel(BaseEmbeddingModel):
                 # emb_df rows are in Geneformer's internal sort order (sorted by token length
                 # via downsample_and_sort). cell_id column carries the original identity for
                 # each row — use it to realign with the input adata.
-                surviving_cell_ids = emb_df["cell_id"].tolist()
+                surviving_cell_ids = emb_df["cell_id"].astype(str).tolist()
                 embeddings = emb_df[emb_cols].values
 
         # Both temp dirs are now cleaned up; only plain objects remain.
