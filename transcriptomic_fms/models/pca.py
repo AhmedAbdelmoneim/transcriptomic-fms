@@ -3,7 +3,6 @@
 from pathlib import Path
 from typing import Any, Optional
 
-import numpy as np
 import scanpy as sc
 from sklearn.decomposition import PCA
 

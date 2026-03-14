@@ -1,14 +1,14 @@
 """Main CLI entry point for embedding generation."""
 
 import argparse
+import gc
 from pathlib import Path
+import shutil
 import sys
 from typing import Any
-import gc
-import shutil
 
-import scanpy as sc
 import anndata as ad
+import scanpy as sc
 
 from transcriptomic_fms.models import get_model, list_models
 from transcriptomic_fms.utils.logging import get_logger, setup_logging
@@ -270,7 +270,6 @@ def list_command(args: argparse.Namespace) -> None:
         return
 
     # Check pyproject.toml for optional dependencies (without requiring them to be installed)
-    optional_deps = {}
     try:
         from pathlib import Path
         import tomllib
@@ -279,8 +278,7 @@ def list_command(args: argparse.Namespace) -> None:
         pyproject_path = project_root / "pyproject.toml"
         if pyproject_path.exists():
             with open(pyproject_path, "rb") as f:
-                config = tomllib.load(f)
-            optional_deps = config.get("project", {}).get("optional-dependencies", {})
+                tomllib.load(f)
     except Exception:
         pass
 

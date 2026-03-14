@@ -1,10 +1,9 @@
 """Geneformer embedding model."""
 
+from pathlib import Path
 import shutil
 import subprocess
-import sys
 import tempfile
-from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
@@ -214,7 +213,7 @@ class GeneformerModel(BaseEmbeddingModel):
                 )
 
             # Find actual model directory (Geneformer-V1-10M subdirectory)
-            actual_model_dir = self._find_actual_model_dir()
+            self._find_actual_model_dir()
 
             # Initialize extractor
             # Note: emb_label requires the attribute to be in dataset features
@@ -356,7 +355,7 @@ class GeneformerModel(BaseEmbeddingModel):
                 "Then run: git lfs install"
             )
 
-        logger.info(f"Downloading Geneformer model from HuggingFace...")
+        logger.info("Downloading Geneformer model from HuggingFace...")
         logger.info(f"Repository: {GENEFORMER_MODEL_REPO}")
         logger.info(f"Model version: {GENEFORMER_MODEL_VERSION}")
         logger.info("Note: This may take a while as models are large. Using git-lfs...")
@@ -464,7 +463,9 @@ class GeneformerModel(BaseEmbeddingModel):
             # Ensure all attributes are numpy arrays
             row_attrs = {"ensembl_id": np.array(gene_names)}
             col_attrs = {
-                "cell_id": np.array(cell_names, dtype=str),  # force string regardless of index type
+                "cell_id": np.array(
+                    cell_names, dtype=str
+                ),  # force string regardless of index type
                 "n_counts": np.array(adata.obs["n_counts"].values),
             }
 
@@ -613,7 +614,6 @@ class GeneformerModel(BaseEmbeddingModel):
         result_obs = adata.obs.loc[surviving_cell_ids].copy()
         result_adata = sc.AnnData(X=embeddings, obs=result_obs)
         return result_adata
-
 
     def get_container_command(
         self,
