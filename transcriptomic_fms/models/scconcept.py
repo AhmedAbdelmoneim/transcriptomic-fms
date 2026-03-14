@@ -229,6 +229,20 @@ class SCConceptModel(BaseEmbeddingModel):
 
         return result_adata
 
+    def compute_sensitivity(
+        self,
+        adata: sc.AnnData,
+        output_path: Path,
+        batch_size: Optional[int] = None,
+        n_cells: Optional[int] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Sensitivity analysis not yet implemented for scConcept."""
+        raise NotImplementedError(
+            "Sensitivity analysis for scConcept is not yet implemented; "
+            "underlying transformer access for gradient computation is not yet integrated."
+        )
+
     def get_container_command(
         self,
         adata_path: Path,

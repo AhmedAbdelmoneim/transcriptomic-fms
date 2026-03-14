@@ -262,6 +262,95 @@ def embed_command(args: argparse.Namespace, model_args: dict[str, Any]) -> None:
         logger.info(f"Done! Embeddings shape: {result_adata.shape}")
 
 
+def sensitivity_analysis_command(args: argparse.Namespace, model_args: dict[str, Any]) -> None:
+    """Run sensitivity analysis (input gradients / Jacobians) using a specified model."""
+    input_path = Path(args.input)
+    if not input_path.exists():
+        logger.error(f"Input file not found: {input_path}")
+        sys.exit(1)
+
+    output_path = Path(args.output)
+
+    try:
+        logger.info(f"Loading model: {args.model}")
+        model = get_model(args.model, **model_args)
+    except ImportError as e:
+        dep_group = None
+        try:
+            from transcriptomic_fms.models.registry import _MODEL_REGISTRY, _ensure_models_loaded
+
+            _ensure_models_loaded()
+            if args.model in _MODEL_REGISTRY:
+                temp_model = _MODEL_REGISTRY[args.model](model_name=args.model)
+                dep_group = temp_model.get_optional_dependency_group()
+        except Exception:
+            pass
+        logger.error(f"Failed to import model: {e}")
+        if dep_group:
+            logger.error("")
+            logger.error(f"To install dependencies for {args.model}, run:")
+            logger.error(f"  make install-model MODEL={args.model}")
+        sys.exit(1)
+    except ValueError as e:
+        logger.error(f"Model error: {e}")
+        sys.exit(1)
+
+    # Check if model supports sensitivity analysis
+    try:
+        model.compute_sensitivity
+    except AttributeError:
+        logger.error(f"Model {args.model} does not support sensitivity analysis.")
+        sys.exit(1)
+
+    sens_kwargs = {}
+    if hasattr(args, "batch_size") and args.batch_size is not None:
+        sens_kwargs["batch_size"] = args.batch_size
+    if hasattr(args, "n_cells") and args.n_cells is not None:
+        sens_kwargs["n_cells"] = args.n_cells
+    sens_kwargs.update(model_args)
+
+    ad.settings.allow_write_nullable_strings = True  # type: ignore
+
+    chunk_size = getattr(args, "chunk_size", None)
+    if chunk_size is not None:
+        # Output must be a directory for chunked runs
+        output_dir = output_path if output_path.suffix != ".h5ad" else output_path.parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Loading AnnData from {input_path} in backed mode...")
+        adata_backed = sc.read_h5ad(input_path, backed="r")
+        n_obs = adata_backed.n_obs
+        logger.info(f"Loaded: {adata_backed.shape}. Processing in chunks of {chunk_size}...")
+
+        for start_idx in range(0, n_obs, chunk_size):
+            end_idx = min(start_idx + chunk_size, n_obs)
+            logger.info(f"Processing chunk {start_idx} to {end_idx}...")
+            chunk_adata = adata_backed[start_idx:end_idx].to_memory()
+            chunk_adata = model.preprocess(chunk_adata)
+            chunk_file = output_dir / f"chunk_{start_idx}_{end_idx}.h5ad"
+            try:
+                model.compute_sensitivity(chunk_adata, chunk_file, **sens_kwargs)
+            except NotImplementedError as e:
+                logger.error(str(e))
+                sys.exit(1)
+            del chunk_adata
+            gc.collect()
+        logger.info(f"Done! Chunk results written to {output_dir}")
+    else:
+        logger.info(f"Loading AnnData from {input_path}...")
+        adata = sc.read_h5ad(input_path)
+        logger.info(f"Loaded: {adata.shape}")
+        logger.info("Preprocessing data...")
+        adata = model.preprocess(adata)
+        logger.info(f"Running sensitivity analysis with {args.model}...")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            model.compute_sensitivity(adata, output_path, **sens_kwargs)
+        except NotImplementedError as e:
+            logger.error(str(e))
+            sys.exit(1)
+        logger.info(f"Done! Results written to {output_path}")
+
+
 def list_command(args: argparse.Namespace) -> None:
     """List all available models."""
     models = list_models()
@@ -349,6 +438,37 @@ def main() -> None:
     )
     embed_parser.set_defaults(func=embed_command)
 
+    # Sensitivity analysis command
+    sens_parser = subparsers.add_parser(
+        "sensitivity-analysis",
+        help="Compute input gradients (sensitivity / Jacobians) per cell",
+        allow_abbrev=False,
+    )
+    sens_parser.add_argument("--model", required=True, help="Model name to use")
+    sens_parser.add_argument(
+        "--input", required=True, type=Path, help="Input AnnData file (.h5ad)"
+    )
+    sens_parser.add_argument(
+        "--output",
+        required=True,
+        type=Path,
+        help="Output path: file for single run, or directory for chunked (chunk_*.h5ad)",
+    )
+    sens_parser.add_argument("--batch-size", type=int, help="Batch size for gradient computation")
+    sens_parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=None,
+        help="Process data in chunks of this size (output must be a directory)",
+    )
+    sens_parser.add_argument(
+        "--n-cells",
+        type=int,
+        default=None,
+        help="Cap number of cells to process (for quick runs)",
+    )
+    sens_parser.set_defaults(func=sensitivity_analysis_command)
+
     # List command
     list_parser = subparsers.add_parser("list", help="List available models")
     list_parser.set_defaults(func=list_command)
@@ -372,6 +492,17 @@ def main() -> None:
     # For embed command, parse model-specific arguments
     if args.command == "embed":
         known_arg_names = ["--model", "--input", "--output", "--batch-size", "--chunk-size"]
+        model_args = _parse_model_args(known_arg_names, unknown)
+        args.func(args, model_args)
+    elif args.command == "sensitivity-analysis":
+        known_arg_names = [
+            "--model",
+            "--input",
+            "--output",
+            "--batch-size",
+            "--chunk-size",
+            "--n-cells",
+        ]
         model_args = _parse_model_args(known_arg_names, unknown)
         args.func(args, model_args)
     else:

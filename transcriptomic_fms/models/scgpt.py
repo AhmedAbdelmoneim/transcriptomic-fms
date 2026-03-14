@@ -401,6 +401,28 @@ class SCGPTModel(BaseEmbeddingModel):
         # Additional scGPT-specific validation could go here if needed
         # For now, base validation is sufficient
 
+    def compute_sensitivity(
+        self,
+        adata: sc.AnnData,
+        output_path: Path,
+        batch_size: Optional[int] = None,
+        n_cells: Optional[int] = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Sensitivity analysis not yet implemented for scGPT.
+
+        Would require loading the scGPT transformer (not just embed_data), then computing
+        ∂(cell_embedding)/∂(input_token_embeddings). Cell embedding is either CLS token
+        or mean pooling depending on scGPT config; implementation would follow the same
+        pattern as Geneformer: J (d_emb, seq_len*d_token), truncated SVD k=50, store
+        jacobian_U (n_cells, d_emb, 50), jacobian_S (n_cells, 50).
+        """
+        raise NotImplementedError(
+            "Sensitivity analysis for scGPT is not yet implemented; "
+            "model loading API needs to be integrated for gradient computation."
+        )
+
     def get_container_command(
         self,
         adata_path: Path,

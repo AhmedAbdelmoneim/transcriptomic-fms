@@ -49,6 +49,30 @@ embed:
 		--output $(OUTPUT) \
 		$(MODEL_ARGS)
 
+## Run sensitivity analysis (input gradients / Jacobians per cell)
+## Usage: make sensitivity-analysis MODEL=<model_name> INPUT=<path/to/input.h5ad> OUTPUT=<path/to/output> [CHUNK_SIZE=N] [N_CELLS=N] [MODEL_ARGS="..."]
+## Example: make sensitivity-analysis MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/sensitivity
+.PHONY: sensitivity-analysis
+sensitivity-analysis:
+	@if [ -z "$(MODEL)" ] || [ -z "$(INPUT)" ] || [ -z "$(OUTPUT)" ]; then \
+		echo "Usage: make sensitivity-analysis MODEL=<model_name> INPUT=<path/to/input.h5ad> OUTPUT=<path/to/output> [CHUNK_SIZE=N] [N_CELLS=N] [MODEL_ARGS=\"...\"]"; \
+		echo ""; \
+		echo "Available models:"; \
+		uv run python -m transcriptomic_fms.cli.main list; \
+		echo ""; \
+		echo "Examples:"; \
+		echo "  make sensitivity-analysis MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/sensitivity"; \
+		echo "  make sensitivity-analysis MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/sens CHUNK_SIZE=100"; \
+		exit 1; \
+	fi
+	$(UV) run python -m transcriptomic_fms.cli.main sensitivity-analysis \
+		--model $(MODEL) \
+		--input $(INPUT) \
+		--output $(OUTPUT) \
+		$(if $(CHUNK_SIZE),--chunk-size $(CHUNK_SIZE),) \
+		$(if $(N_CELLS),--n-cells $(N_CELLS),) \
+		$(MODEL_ARGS)
+
 ## Build model container for HPC
 ## Usage: make build-container MODEL=<model_name>
 ## Example: make build-container MODEL=scgpt

@@ -55,6 +55,25 @@ make hpc-embed MODEL=scgpt \
 - Output files are automatically prefixed with the model name (e.g., `scgpt_embeddings.h5ad`)
 - Output is a barebones AnnData object with embeddings in `X` and `obs` preserved for cell mapping
 
+### Sensitivity analysis
+
+Compute input gradients (Jacobians) and sensitivity metrics per cell in a memory-efficient, chunked pipeline:
+
+```bash
+# Single run: output file or directory
+make sensitivity-analysis MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/sensitivity.h5ad
+
+# Chunked run: OUTPUT is a directory; chunk_0_100.h5ad, chunk_100_200.h5ad, ...
+make sensitivity-analysis MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/sens CHUNK_SIZE=100
+
+# Optional cap for quick runs
+make sensitivity-analysis MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/sens N_CELLS=50
+```
+
+**Supported models:** Geneformer, scFoundation (cell embedding only), SCimilarity. scGPT and scConcept are not yet implemented and will report a clear error.
+
+**Output layout (per chunk or single file):** AnnData with `obs` (cell_id, cell_type, seq_length), `obsm['X_baseline']` (n_cells, d_emb) cell embeddings, `obsm['jacobian_U']` (n_cells, d_emb, 50) float16 left singular vectors of the Jacobian, and `obsm['jacobian_S']` (n_cells, 50) float32 singular values. The full Jacobian is never stored; it is computed per cell, reshaped to (d_emb, seq_len*d_token), truncated SVD (top 50) is taken, then the Jacobian is discarded. Use `--chunk-size` to process in chunks and manage memory.
+
 ## Available Models
 
 ### PCA
@@ -312,6 +331,7 @@ Models inherit from `BaseEmbeddingModel` and implement:
 - `preprocess()`: Model-specific preprocessing
 - `embed()`: Generate embeddings
 - `decode()`: (Optional) Decode embeddings back to expression
+- `compute_sensitivity()`: (Optional) Input gradients / Jacobians per cell (Geneformer, scFoundation)
 
 Models are auto-registered via the `@register_model` decorator.
 
@@ -323,8 +343,16 @@ python -m transcriptomic_fms.cli.main embed \
     --model <model_name> \
     --input <path/to/input.h5ad> \
     --output <path/to/output.h5ad> \
+    [--chunk-size N] \
     [--model-arg-name <value>]
-```
+
+# Sensitivity analysis (Geneformer, scFoundation)
+python -m transcriptomic_fms.cli.main sensitivity-analysis \
+    --model <model_name> \
+    --input <path/to/input.h5ad> \
+    --output <path/to/output.h5ad_or_dir> \
+    [--chunk-size N] [--n-cells N] [--batch-size N] \
+    [--model-arg-name <value>]
 
 # List models
 python -m transcriptomic_fms.cli.main list
