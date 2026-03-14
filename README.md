@@ -70,6 +70,8 @@ make sensitivity-analysis MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/se
 make sensitivity-analysis MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/sens N_CELLS=50
 ```
 
+On HPC (after building the model container), use `make hpc-sensitivity-analysis-interactive` (interactive node) or `make hpc-sensitivity-analysis` (SLURM batch) with the same `MODEL`, `INPUT`, `OUTPUT`, and optional `CHUNK_SIZE`, `N_CELLS`, `MODEL_ARGS`.
+
 **Supported models:** Geneformer, scFoundation (cell embedding only), SCimilarity. scGPT and scConcept are not yet implemented and will report a clear error.
 
 **Output layout (per chunk or single file):** AnnData with `obs` (cell_id, cell_type, seq_length), `obsm['X_baseline']` (n_cells, d_emb) cell embeddings, `obsm['jacobian_U']` (n_cells, d_emb, 50) float16 left singular vectors of the Jacobian, and `obsm['jacobian_S']` (n_cells, 50) float32 singular values. The full Jacobian is never stored; it is computed per cell, reshaped to (d_emb, seq_len*d_token), truncated SVD (top 50) is taken, then the Jacobian is discarded. Use `--chunk-size` to process in chunks and manage memory.
@@ -317,6 +319,7 @@ Default options in `run_job.sh`:
 Override by passing options to `sbatch`:
 ```bash
 sbatch --time=8:00:00 --mem=128G transcriptomic_fms/hpc/run_job.sh embed ...
+sbatch --time=8:00:00 --mem=128G transcriptomic_fms/hpc/run_job.sh sensitivity-analysis --model scimilarity --input data/test.h5ad --output output/sens.h5ad --n-cells 10
 ```
 
 ## Data Requirements
