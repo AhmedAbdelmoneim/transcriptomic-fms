@@ -1,9 +1,6 @@
 """scGPT embedding model."""
 
 import json
-import os
-import ssl
-import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -264,7 +261,6 @@ class SCGPTModel(BaseEmbeddingModel):
         try:
             # Set SSL certificate path for gdown (Ubuntu/Debian locations)
             import os
-            import ssl
 
             cert_paths = [
                 "/etc/ssl/certs/ca-certificates.crt",

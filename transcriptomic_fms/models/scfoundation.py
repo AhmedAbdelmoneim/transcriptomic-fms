@@ -25,8 +25,6 @@ SCFOUNDATION_REPO_URL = "https://github.com/biomap-research/scFoundation.git"
 try:
     # Try importing scFoundation model loading functions
     # scFoundation expects the model code to be available
-    import sys
-
     # We'll need to handle the scFoundation imports dynamically
     # The actual scFoundation package structure may vary
     _scFoundation_available = False
@@ -439,8 +437,6 @@ class SCFoundationModel(BaseEmbeddingModel):
         """Load the scFoundation model and config."""
         if self._model is not None:
             return self._model, self._config
-
-        import torch
 
         # Determine the key based on output_type and version
         if self.output_type == "cell":

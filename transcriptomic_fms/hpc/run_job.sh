@@ -7,8 +7,12 @@
 #SBATCH --account=def-jagillis
 #SBATCH --output=run_logs/%x_%j.out
 #SBATCH --error=run_logs/%x_%j.err
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:h100:1
 
+# Load required modules
+# Temporarily suspend strict error handling to prevent exit on profile warnings
+set +e
+source /cvmfs/soft.computecanada.ca/config/profile/bash.sh
 set -e
 
 # Load required modules

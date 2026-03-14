@@ -1,6 +1,5 @@
 """SCimilarity embedding model."""
 
-import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -273,9 +272,10 @@ class SCimilarityModel(BaseEmbeddingModel):
     def _download_model(self) -> None:
         """Download SCimilarity model from Zenodo."""
         try:
-            import requests
-            import tarfile
             import hashlib
+            import tarfile
+
+            import requests
         except ImportError:
             raise ImportError(
                 "requests is required for automatic model download. Install with: pip install requests"

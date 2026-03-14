@@ -1,14 +1,14 @@
 """Main CLI entry point for embedding generation."""
 
 import argparse
+import gc
 from pathlib import Path
+import shutil
 import sys
 from typing import Any
-import gc
-import shutil
 
-import scanpy as sc
 import anndata as ad
+import scanpy as sc
 
 from transcriptomic_fms.models import get_model, list_models
 from transcriptomic_fms.utils.logging import get_logger, setup_logging
@@ -201,32 +201,36 @@ def embed_command(args: argparse.Namespace, model_args: dict[str, Any]) -> None:
         temp_dir.mkdir(parents=True, exist_ok=True)
         chunk_files = []
 
+        original_obs = adata_backed.obs.copy()  # snapshot full obs before any filtering
+
         for start_idx in range(0, n_obs, args.chunk_size):
             end_idx = min(start_idx + args.chunk_size, n_obs)
             logger.info(f"Processing chunk {start_idx} to {end_idx}...")
 
-            # Extract chunk to memory
             chunk_adata = adata_backed[start_idx:end_idx].to_memory()
-
-            # Preprocess and Embed
             chunk_adata = model.preprocess(chunk_adata)
             chunk_file = temp_dir / f"chunk_{start_idx}_{end_idx}.h5ad"
             chunk_result = model.embed(chunk_adata, chunk_file, **embed_kwargs)
 
-            # Ensure model.embed saves the chunk if it didn't automatically
             if not chunk_file.exists():
                 chunk_result.write(chunk_file)
 
             chunk_files.append(chunk_file)
-
-            # Purge memory
             del chunk_adata
             del chunk_result
             gc.collect()
 
         logger.info("Concatenating embedded chunks...")
         loaded_chunks = [sc.read_h5ad(f) for f in chunk_files]
-        result_adata = ad.concat(loaded_chunks, join="outer")
+        # join="inner" avoids NaN-padded obs columns from schema drift between chunks.
+        # obs columns are then restored from the original snapshot to guarantee completeness.
+        result_adata = ad.concat(loaded_chunks, join="inner")
+
+        # Restore full obs columns from original adata for surviving cells.
+        # Cells may have been dropped by the model (e.g. Geneformer low-token filter),
+        # so we align by index rather than assuming 1:1 correspondence.
+        surviving_ids = result_adata.obs_names
+        result_adata.obs = original_obs.loc[surviving_ids].copy()
 
         logger.info("Validating embeddings...")
         model.validate_embeddings(result_adata)
@@ -266,7 +270,6 @@ def list_command(args: argparse.Namespace) -> None:
         return
 
     # Check pyproject.toml for optional dependencies (without requiring them to be installed)
-    optional_deps = {}
     try:
         from pathlib import Path
         import tomllib
@@ -275,8 +278,7 @@ def list_command(args: argparse.Namespace) -> None:
         pyproject_path = project_root / "pyproject.toml"
         if pyproject_path.exists():
             with open(pyproject_path, "rb") as f:
-                config = tomllib.load(f)
-            optional_deps = config.get("project", {}).get("optional-dependencies", {})
+                tomllib.load(f)
     except Exception:
         pass
 
