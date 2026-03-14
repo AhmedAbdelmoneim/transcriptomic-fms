@@ -467,6 +467,13 @@ class SCimilarityModel(BaseEmbeddingModel):
         n_cells_data, n_genes = X.shape
         cell_type_col = "cell_type" if "cell_type" in adata.obs.columns else None
 
+        logger.info(
+            "Sensitivity analysis: %d cells, %d genes, device=%s",
+            n_cells_data,
+            n_genes,
+            device,
+        )
+
         baselines_out = []
         U_out = []
         S_out = []
@@ -480,7 +487,14 @@ class SCimilarityModel(BaseEmbeddingModel):
             return out.squeeze(0)
 
         encoder.eval()
-        for idx in range(n_cells_data):
+        from tqdm import tqdm
+
+        for idx in tqdm(
+            range(n_cells_data),
+            desc="SCimilarity sensitivity",
+            unit="cell",
+            leave=True,
+        ):
             x = torch.from_numpy(X[idx : idx + 1]).to(device, dtype=torch.float32)
             x_1d = x.squeeze(0)
 

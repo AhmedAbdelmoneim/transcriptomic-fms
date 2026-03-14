@@ -704,7 +704,16 @@ class GeneformerModel(BaseEmbeddingModel):
                 else {str(i): i for i in range(len(dataset))}
             )
 
-            for obs_idx in range(len(adata)):
+            from tqdm import tqdm
+
+            n_adata = len(adata)
+            logger.info("Sensitivity analysis: %d cells (tokenised)", n_adata)
+            for obs_idx in tqdm(
+                range(n_adata),
+                desc="Geneformer sensitivity",
+                unit="cell",
+                leave=True,
+            ):
                 cell_id = str(adata.obs_names[obs_idx])
                 ct = adata.obs[cell_type_col].iloc[obs_idx] if cell_type_col else "unknown"
                 row_idx = id_to_row.get(cell_id)

@@ -650,6 +650,13 @@ class SCFoundationModel(BaseEmbeddingModel):
         gene_ids = torch.arange(19266, dtype=torch.long, device=device).unsqueeze(0)
         cell_type_col = "cell_type" if "cell_type" in adata.obs.columns else None
 
+        logger.info(
+            "Sensitivity analysis: %d cells, %d genes, device=%s",
+            num_cells,
+            num_genes,
+            device,
+        )
+
         cell_ids_out = []
         cell_types_out = []
         baselines_out = []
@@ -657,7 +664,14 @@ class SCFoundationModel(BaseEmbeddingModel):
         S_out = []
         seqlen_out = []
 
-        for idx in range(num_cells):
+        from tqdm import tqdm
+
+        for idx in tqdm(
+            range(num_cells),
+            desc="scFoundation sensitivity",
+            unit="cell",
+            leave=True,
+        ):
             batch = X[idx : idx + 1]
             batch_full = self._batch_to_tensor(batch, device)
             batch_gene_ids = gene_ids.expand(1, -1)
