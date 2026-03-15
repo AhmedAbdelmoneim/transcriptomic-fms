@@ -621,7 +621,7 @@ class SCFoundationModel(BaseEmbeddingModel):
         scFoundation uses custom pooling: last position, second-to-last, max over rest, mean over rest
         (pool_type "all"), or max over all positions. J shape (d_emb, seq_len*d_token). Top k=50
         SVD kept; full Jacobian discarded. Use CLI --chunk-size to process in chunks.
-        Writes obs (cell_id, cell_type, seq_length), obsm['X_baseline'], obsm['jacobian_U']
+        Passes through input adata.obs and adds seq_length. Writes obsm['X_baseline'], obsm['jacobian_U']
         (n_cells, d_emb, 50) float16, obsm['jacobian_S'] (n_cells, 50) float32.
         """
         from scipy.sparse.linalg import svds
@@ -648,7 +648,6 @@ class SCFoundationModel(BaseEmbeddingModel):
             raise ValueError(f"Data must have 19264 genes after preprocessing, got {num_genes}.")
 
         gene_ids = torch.arange(19266, dtype=torch.long, device=device).unsqueeze(0)
-        cell_type_col = "cell_type" if "cell_type" in adata.obs.columns else None
 
         logger.info(
             "Sensitivity analysis: %d cells, %d genes, device=%s",
@@ -657,8 +656,6 @@ class SCFoundationModel(BaseEmbeddingModel):
             device,
         )
 
-        cell_ids_out = []
-        cell_types_out = []
         baselines_out = []
         U_out = []
         S_out = []
@@ -721,10 +718,6 @@ class SCFoundationModel(BaseEmbeddingModel):
                     S_pad[: S.shape[0]] = S
                     U, S = U_pad, S_pad
 
-            cell_id = str(adata.obs_names[idx])
-            ct = adata.obs[cell_type_col].iloc[idx] if cell_type_col else "unknown"
-            cell_ids_out.append(cell_id)
-            cell_types_out.append(ct)
             baselines_out.append(baseline)
             U_out.append(U)
             S_out.append(S)
@@ -735,18 +728,12 @@ class SCFoundationModel(BaseEmbeddingModel):
         jacobian_S = np.array(S_out, dtype=np.float32)
         seq_lengths_arr = np.array(seqlen_out)
 
-        obs_df = pd.DataFrame(
-            {
-                "cell_id": cell_ids_out,
-                "cell_type": cell_types_out,
-                "seq_length": seq_lengths_arr,
-            }
-        )
-        obs_df.index = cell_ids_out
+        obs_out = adata.obs.iloc[:num_cells].copy()
+        obs_out["seq_length"] = seq_lengths_arr
 
         result_adata = sc.AnnData(
             X=baselines_arr,
-            obs=obs_df,
+            obs=obs_out,
             obsm={
                 "X_baseline": baselines_arr,
                 "jacobian_U": jacobian_U,
@@ -756,7 +743,7 @@ class SCFoundationModel(BaseEmbeddingModel):
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         result_adata.write(output_path)
-        logger.info("Wrote sensitivity results to %s (%d cells)", output_path, len(cell_ids_out))
+        logger.info("Wrote sensitivity results to %s (%d cells)", output_path, num_cells)
 
     def _batch_to_tensor(self, batch: np.ndarray, device: str) -> Any:
         """Convert a batch (B, 19264) to batch_full (B, 19266) tensor."""

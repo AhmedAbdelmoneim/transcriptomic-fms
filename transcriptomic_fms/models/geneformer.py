@@ -660,7 +660,7 @@ class GeneformerModel(BaseEmbeddingModel):
         Compute ∂(mean_pooled_embedding)/∂(token_embeddings), SVD per cell; write to output_path.
 
         Cells are processed in the order of adata (use CLI --chunk-size to run in chunks).
-        Writes obs (cell_id, cell_type, seq_length), obsm['X_baseline'] (n_cells, d_emb),
+        Passes through input adata.obs for output cells and adds seq_length. Writes obsm['X_baseline'] (n_cells, d_emb),
         obsm['jacobian_U'] (n_cells, d_emb, 50) float16, obsm['jacobian_S'] (n_cells, 50) float32.
         Full Jacobian is not stored.
         """
@@ -738,18 +738,12 @@ class GeneformerModel(BaseEmbeddingModel):
         jacobian_S = np.array(S_out, dtype=np.float32)
         seq_lengths_arr = np.array(seqlen_out)
 
-        obs_df = pd.DataFrame(
-            {
-                "cell_id": cell_ids_out,
-                "cell_type": cell_types_out,
-                "seq_length": seq_lengths_arr,
-            }
-        )
-        obs_df.index = cell_ids_out
+        obs_out = adata.obs.loc[cell_ids_out].copy()
+        obs_out["seq_length"] = seq_lengths_arr
 
         result_adata = sc.AnnData(
             X=baselines_arr,
-            obs=obs_df,
+            obs=obs_out,
             obsm={
                 "X_baseline": baselines_arr,
                 "jacobian_U": jacobian_U,

@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
-import pandas as pd
 import scanpy as sc
 
 from transcriptomic_fms.models.base import BaseEmbeddingModel
@@ -438,7 +437,7 @@ class SCimilarityModel(BaseEmbeddingModel):
 
         SCimilarity has no token sequence: encoder(expression) -> embedding. J shape (d_emb, n_genes).
         Reshape to (d_emb, n_genes), top k=50 SVD, discard J. Use CLI --chunk-size to process in chunks.
-        Writes obs (cell_id, cell_type, seq_length=n_genes), obsm['X_baseline'],
+        Passes through input adata.obs and adds seq_length=n_genes. Writes obsm['X_baseline'],
         obsm['jacobian_U'] (n_cells, d_emb, 50) float16, obsm['jacobian_S'] (n_cells, 50) float32.
         """
         import torch
@@ -465,7 +464,6 @@ class SCimilarityModel(BaseEmbeddingModel):
             X = np.asarray(adata.X, dtype=np.float32)
 
         n_cells_data, n_genes = X.shape
-        cell_type_col = "cell_type" if "cell_type" in adata.obs.columns else None
 
         logger.info(
             "Sensitivity analysis: %d cells, %d genes, device=%s",
@@ -477,8 +475,6 @@ class SCimilarityModel(BaseEmbeddingModel):
         baselines_out = []
         U_out = []
         S_out = []
-        cell_ids_out = []
-        cell_types_out = []
 
         def _embed_single(inp: torch.Tensor) -> torch.Tensor:
             out = encoder(inp.unsqueeze(0))
@@ -512,26 +508,17 @@ class SCimilarityModel(BaseEmbeddingModel):
             baselines_out.append(baseline)
             U_out.append(U)
             S_out.append(S)
-            cell_ids_out.append(str(adata.obs_names[idx]))
-            ct = adata.obs[cell_type_col].iloc[idx] if cell_type_col else "unknown"
-            cell_types_out.append(ct)
 
         baselines_arr = np.array(baselines_out, dtype=np.float32)
         jacobian_U = np.array(U_out, dtype=np.float16)
         jacobian_S = np.array(S_out, dtype=np.float32)
 
-        obs_df = pd.DataFrame(
-            {
-                "cell_id": cell_ids_out,
-                "cell_type": cell_types_out,
-                "seq_length": np.full(len(cell_ids_out), n_genes),
-            }
-        )
-        obs_df.index = cell_ids_out
+        obs_out = adata.obs.iloc[:n_cells_data].copy()
+        obs_out["seq_length"] = n_genes
 
         result_adata = sc.AnnData(
             X=baselines_arr,
-            obs=obs_df,
+            obs=obs_out,
             obsm={
                 "X_baseline": baselines_arr,
                 "jacobian_U": jacobian_U,
@@ -544,7 +531,7 @@ class SCimilarityModel(BaseEmbeddingModel):
         logger.info(
             "Wrote sensitivity results to %s (%d cells, %d genes)",
             output_path,
-            len(cell_ids_out),
+            n_cells_data,
             n_genes,
         )
 

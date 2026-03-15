@@ -74,7 +74,7 @@ On HPC (after building the model container), use `make hpc-sensitivity-analysis-
 
 **Supported models:** Geneformer, scFoundation (cell embedding only), SCimilarity. scGPT and scConcept are not yet implemented and will report a clear error.
 
-**Output layout (per chunk or single file):** AnnData with `obs` (cell_id, cell_type, seq_length), `obsm['X_baseline']` (n_cells, d_emb) cell embeddings, `obsm['jacobian_U']` (n_cells, d_emb, 50) float16 left singular vectors of the Jacobian, and `obsm['jacobian_S']` (n_cells, 50) float32 singular values. The full Jacobian is never stored; it is computed per cell, reshaped to (d_emb, seq_len*d_token), truncated SVD (top 50) is taken, then the Jacobian is discarded. Use `--chunk-size` to process in chunks and manage memory.
+**Output layout (per chunk or single file):** AnnData with `obs` pass-through from input plus `seq_length`, `obsm['X_baseline']` (n_cells, d_emb) cell embeddings, `obsm['jacobian_U']` (n_cells, d_emb, 50) float16 left singular vectors of the Jacobian, and `obsm['jacobian_S']` (n_cells, 50) float32 singular values. The full Jacobian is never stored; it is computed per cell, reshaped to (d_emb, seq_len*d_token), truncated SVD (top 50) is taken, then the Jacobian is discarded. Use `--chunk-size` to process in chunks and manage memory.
 
 ## Available Models
 
