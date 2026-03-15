@@ -72,7 +72,7 @@ make sensitivity-analysis MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/se
 
 On HPC (after building the model container), use `make hpc-sensitivity-analysis-interactive` (interactive node) or `make hpc-sensitivity-analysis` (SLURM batch) with the same `MODEL`, `INPUT`, `OUTPUT`, and optional `CHUNK_SIZE`, `N_CELLS`, `MODEL_ARGS`.
 
-**Supported models:** Geneformer, scFoundation (cell embedding only), SCimilarity. scGPT and scConcept are not yet implemented and will report a clear error.
+**Supported models:** Geneformer, scFoundation (cell embedding only), SCimilarity, scGPT. scConcept is not yet implemented and will report a clear error.
 
 **Output layout (per chunk or single file):** AnnData with `obs` pass-through from input plus `seq_length`, `obsm['X_baseline']` (n_cells, d_emb) cell embeddings, `obsm['jacobian_U']` (n_cells, d_emb, 50) float16 left singular vectors of the Jacobian, and `obsm['jacobian_S']` (n_cells, 50) float32 singular values. The full Jacobian is never stored; it is computed per cell, reshaped to (d_emb, seq_len*d_token), truncated SVD (top 50) is taken, then the Jacobian is discarded. Use `--chunk-size` to process in chunks and manage memory.
 
