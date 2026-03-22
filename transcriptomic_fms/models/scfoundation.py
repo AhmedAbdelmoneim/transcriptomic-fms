@@ -51,7 +51,7 @@ except ImportError:
 
 @register_model("scfoundation")
 class SCFoundationModel(BaseEmbeddingModel):
-    """scFoundation pretraining model for single-cell embeddings."""
+    """scFoundation pretraining model for single-cell or bulk RNA-seq embeddings."""
 
     def __init__(
         self,
@@ -62,6 +62,7 @@ class SCFoundationModel(BaseEmbeddingModel):
         cache_dir: Optional[str] = None,
         device: Optional[str] = None,
         requires_gpu: bool = True,
+        input_type: str = "singlecell",
         output_type: str = "cell",
         pool_type: str = "all",
         tgthighres: str = "t4",
@@ -86,17 +87,22 @@ class SCFoundationModel(BaseEmbeddingModel):
             device: Device hint for scFoundation / PyTorch (``"cuda"`` or ``"cpu"``).
                     If ``None``, will auto-detect.
             requires_gpu: Whether this model requires a GPU (default: True).
+            input_type: ``"singlecell"`` or ``"bulk"`` (matches scFoundation ``get_embedding.py``).
+                Bulk uses library-sum style tail tokens; ``tgthighres`` applies only to single-cell.
             output_type: Type of output embeddings. Choices: ``"cell"``, ``"gene"``,
                 ``"gene_batch"``. Default: ``"cell"``.
             pool_type: Pooling type for cell embeddings. Choices: ``"all"``, ``"max"``.
                 Only valid when ``output_type="cell"``. Default: ``"all"``.
-            tgthighres: Target high resolution token value. Can be:
+            tgthighres: Target high resolution token value. Single-cell only. Can be:
                 - ``"t<number>"``: targeted high resolution (T=number)
                 - ``"f<number>"``: fold change (T/S=number)
                 - ``"a<number>"``: addition (T=S+number)
                 Default: ``"t4"``.
-            pre_normalized: Whether input is pre-normalized. Choices: ``"F"``, ``"T"``, ``"A"``.
-                Default: ``"F"``.
+            pre_normalized: Normalization mode (see scFoundation README). For **single-cell**:
+                ``F``/``T`` = raw vs log1p(CPM); ``A`` = GEARS-style (last column = total count).
+                For **bulk**: only ``F`` or ``T`` — ``F`` runs ``normalize_total`` + ``log1p`` in
+                :meth:`preprocess`, and tail tokens use ``log10(row sum)``; ``T`` uses raw values
+                and ``sum`` for tail tokens. Default: ``"F"``.
             version: Model version. Choices: ``"ce"`` (cell embedding), ``"rde"`` (read depth
                 enhancement). Only valid when ``output_type="cell"``. Default: ``"ce"``.
             auto_download: If True, automatically download gene index file if not found.
@@ -106,6 +112,14 @@ class SCFoundationModel(BaseEmbeddingModel):
             **kwargs: Additional, model-specific configuration (stored in ``self.config``).
         """
         super().__init__(model_name=model_name, requires_gpu=requires_gpu, **kwargs)
+
+        if input_type not in ("singlecell", "bulk"):
+            raise ValueError(f"input_type must be 'singlecell' or 'bulk', got {input_type!r}")
+        if input_type == "bulk" and pre_normalized not in ("F", "T"):
+            raise ValueError(
+                "For input_type='bulk', pre_normalized must be 'F' or 'T' "
+                "(append-total mode 'A' is single-cell only in scFoundation)."
+            )
 
         # Check if scFoundation dependencies are available
         if not _scFoundation_available:
@@ -154,6 +168,7 @@ class SCFoundationModel(BaseEmbeddingModel):
                 )
 
         self.ckpt_name = ckpt_name
+        self.input_type = input_type
         self.output_type = output_type
         self.pool_type = pool_type
         self.tgthighres = tgthighres
@@ -407,6 +422,10 @@ class SCFoundationModel(BaseEmbeddingModel):
         - Data is expected to contain (raw or normalized) counts in ``adata.X``.
 
         This method ensures that the data matches the 19264 gene list required by scFoundation.
+
+        For ``input_type="bulk"`` with ``pre_normalized="F"``, applies Scanpy
+        ``normalize_total`` then ``log1p`` on the aligned matrix, matching
+        `get_embedding.py` in the upstream repo.
         """
         adata = adata.copy()
 
@@ -427,6 +446,14 @@ class SCFoundationModel(BaseEmbeddingModel):
         # Update AnnData with selected genes
         adata = sc.AnnData(X_df.values, obs=adata.obs.copy(), var=var)
         adata.var_names = X_df.columns.tolist()
+
+        if self.input_type == "bulk" and self.pre_normalized == "F":
+            logger.info(
+                "Bulk + pre_normalized=F: applying scanpy normalize_total and log1p "
+                "(scFoundation get_embedding.py convention)"
+            )
+            sc.pp.normalize_total(adata, inplace=True)
+            sc.pp.log1p(adata, inplace=True)
 
         if output_path:
             adata.write(output_path)
@@ -510,8 +537,8 @@ class SCFoundationModel(BaseEmbeddingModel):
 
         logger.info(
             f"Extracting scFoundation embeddings "
-            f"(output_type={self.output_type}, version={self.version}, "
-            f"device={device}, batch_size={batch_size})..."
+            f"(input_type={self.input_type}, output_type={self.output_type}, "
+            f"version={self.version}, device={device}, batch_size={batch_size})..."
         )
 
         # Pre-create gene id tensor once
@@ -525,34 +552,89 @@ class SCFoundationModel(BaseEmbeddingModel):
                 batch = X[start:end]  # (B, 19264)
 
                 # -----------------------
-                # Build input tensor
+                # Build input tensor (match scFoundation get_embedding.py)
                 # -----------------------
-                if self.pre_normalized == "F":
+                if self.input_type == "bulk":
+                    batch_proc = np.asarray(batch, dtype=np.float32)
+                    row_sums = batch_proc.sum(axis=1, keepdims=True)
+                    if self.pre_normalized == "T":
+                        total_token = row_sums
+                    elif self.pre_normalized == "F":
+                        total_token = np.log10(row_sums)
+                    else:
+                        raise ValueError(
+                            f"bulk pre_normalized must be T or F, got '{self.pre_normalized}'"
+                        )
+                    batch_full = np.concatenate([batch_proc, total_token, total_token], axis=1)
+                elif self.pre_normalized == "F":
                     totalcounts = batch.sum(axis=1, keepdims=True)
                     batch_proc = np.log1p(batch / totalcounts * 1e4)
+                    if self.tgthighres[0] == "f":
+                        hr = np.log10(totalcounts * float(self.tgthighres[1:]))
+                        batch_full = np.concatenate(
+                            [batch_proc, hr, np.log10(totalcounts)], axis=1
+                        )
+                    elif self.tgthighres[0] == "a":
+                        hr = np.log10(totalcounts) + float(self.tgthighres[1:])
+                        batch_full = np.concatenate(
+                            [batch_proc, hr, np.log10(totalcounts)], axis=1
+                        )
+                    elif self.tgthighres[0] == "t":
+                        hr = np.full_like(totalcounts, float(self.tgthighres[1:]))
+                        batch_full = np.concatenate(
+                            [batch_proc, hr, np.log10(totalcounts)], axis=1
+                        )
+                    else:
+                        raise ValueError(
+                            f"tgthighres must start with f, a or t, got '{self.tgthighres}'"
+                        )
                 elif self.pre_normalized == "T":
                     batch_proc = batch
                     totalcounts = batch.sum(axis=1, keepdims=True)
+                    if self.tgthighres[0] == "f":
+                        hr = np.log10(totalcounts * float(self.tgthighres[1:]))
+                        batch_full = np.concatenate(
+                            [batch_proc, hr, np.log10(totalcounts)], axis=1
+                        )
+                    elif self.tgthighres[0] == "a":
+                        hr = np.log10(totalcounts) + float(self.tgthighres[1:])
+                        batch_full = np.concatenate(
+                            [batch_proc, hr, np.log10(totalcounts)], axis=1
+                        )
+                    elif self.tgthighres[0] == "t":
+                        hr = np.full_like(totalcounts, float(self.tgthighres[1:]))
+                        batch_full = np.concatenate(
+                            [batch_proc, hr, np.log10(totalcounts)], axis=1
+                        )
+                    else:
+                        raise ValueError(
+                            f"tgthighres must start with f, a or t, got '{self.tgthighres}'"
+                        )
                 elif self.pre_normalized == "A":
                     batch_proc = batch[:, :-1]
                     totalcounts = batch[:, -1:]
+                    if self.tgthighres[0] == "f":
+                        hr = np.log10(totalcounts * float(self.tgthighres[1:]))
+                        batch_full = np.concatenate(
+                            [batch_proc, hr, np.log10(totalcounts)], axis=1
+                        )
+                    elif self.tgthighres[0] == "a":
+                        hr = np.log10(totalcounts) + float(self.tgthighres[1:])
+                        batch_full = np.concatenate(
+                            [batch_proc, hr, np.log10(totalcounts)], axis=1
+                        )
+                    elif self.tgthighres[0] == "t":
+                        hr = np.full_like(totalcounts, float(self.tgthighres[1:]))
+                        batch_full = np.concatenate(
+                            [batch_proc, hr, np.log10(totalcounts)], axis=1
+                        )
+                    else:
+                        raise ValueError(
+                            f"tgthighres must start with f, a or t, got '{self.tgthighres}'"
+                        )
                 else:
                     raise ValueError(
                         f"pre_normalized must be T, F or A, got '{self.pre_normalized}'"
-                    )
-
-                if self.tgthighres[0] == "f":
-                    hr = np.log10(totalcounts * float(self.tgthighres[1:]))
-                    batch_full = np.concatenate([batch_proc, hr, np.log10(totalcounts)], axis=1)
-                elif self.tgthighres[0] == "a":
-                    hr = np.log10(totalcounts) + float(self.tgthighres[1:])
-                    batch_full = np.concatenate([batch_proc, hr, np.log10(totalcounts)], axis=1)
-                elif self.tgthighres[0] == "t":
-                    hr = np.full_like(totalcounts, float(self.tgthighres[1:]))
-                    batch_full = np.concatenate([batch_proc, hr, np.log10(totalcounts)], axis=1)
-                else:
-                    raise ValueError(
-                        f"tgthighres must start with f, a or t, got '{self.tgthighres}'"
                     )
 
                 batch_full = torch.from_numpy(batch_full).float().to(device)  # (B, 19266)
@@ -626,6 +708,11 @@ class SCFoundationModel(BaseEmbeddingModel):
         """
         from scipy.sparse.linalg import svds
         import torch
+
+        if self.input_type == "bulk":
+            raise NotImplementedError(
+                "Sensitivity analysis is only implemented for input_type='singlecell'."
+            )
 
         if self.output_type != "cell":
             raise NotImplementedError(
@@ -799,6 +886,8 @@ class SCFoundationModel(BaseEmbeddingModel):
             cmd.extend(["--model-path", str(self.model_path)])
         if self.ckpt_name:
             cmd.extend(["--ckpt-name", self.ckpt_name])
+        if self.input_type:
+            cmd.extend(["--input-type", self.input_type])
         if self.gene_index_path:
             cmd.extend(["--gene-index-path", str(self.gene_index_path)])
         if self.device:
