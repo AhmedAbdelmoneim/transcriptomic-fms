@@ -49,6 +49,30 @@ embed:
 		--output $(OUTPUT) \
 		$(MODEL_ARGS)
 
+## Run sensitivity analysis (input gradients / Jacobians per cell)
+## Usage: make sensitivity-analysis MODEL=<model_name> INPUT=<path/to/input.h5ad> OUTPUT=<path/to/output> [CHUNK_SIZE=N] [N_CELLS=N] [MODEL_ARGS="..."]
+## Example: make sensitivity-analysis MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/sensitivity
+.PHONY: sensitivity-analysis
+sensitivity-analysis:
+	@if [ -z "$(MODEL)" ] || [ -z "$(INPUT)" ] || [ -z "$(OUTPUT)" ]; then \
+		echo "Usage: make sensitivity-analysis MODEL=<model_name> INPUT=<path/to/input.h5ad> OUTPUT=<path/to/output> [CHUNK_SIZE=N] [N_CELLS=N] [MODEL_ARGS=\"...\"]"; \
+		echo ""; \
+		echo "Available models:"; \
+		uv run python -m transcriptomic_fms.cli.main list; \
+		echo ""; \
+		echo "Examples:"; \
+		echo "  make sensitivity-analysis MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/sensitivity"; \
+		echo "  make sensitivity-analysis MODEL=geneformer INPUT=data/test.h5ad OUTPUT=output/sens CHUNK_SIZE=100"; \
+		exit 1; \
+	fi
+	$(UV) run python -m transcriptomic_fms.cli.main sensitivity-analysis \
+		--model $(MODEL) \
+		--input $(INPUT) \
+		--output $(OUTPUT) \
+		$(if $(CHUNK_SIZE),--chunk-size $(CHUNK_SIZE),) \
+		$(if $(N_CELLS),--n-cells $(N_CELLS),) \
+		$(MODEL_ARGS)
+
 ## Build model container for HPC
 ## Usage: make build-container MODEL=<model_name>
 ## Example: make build-container MODEL=scgpt
@@ -200,6 +224,72 @@ hpc-embed:
 		--model $(MODEL) \
 		--input $(INPUT) \
 		--output $(OUTPUT) \
+		$(MODEL_ARGS)
+
+## Run sensitivity analysis interactively on HPC (requires interactive node via salloc)
+## Usage: make hpc-sensitivity-analysis-interactive MODEL=<model_name> INPUT=<path/to/input.h5ad> OUTPUT=<path/to/output> [CHUNK_SIZE=N] [N_CELLS=N] [MODEL_ARGS="..."]
+## Note: Run this after getting an interactive node with: salloc --gres=gpu:1 ...
+.PHONY: hpc-sensitivity-analysis-interactive
+hpc-sensitivity-analysis-interactive:
+	@if [ -z "$(MODEL)" ] || [ -z "$(INPUT)" ] || [ -z "$(OUTPUT)" ]; then \
+		echo "Usage: make hpc-sensitivity-analysis-interactive MODEL=<model_name> INPUT=<path/to/input.h5ad> OUTPUT=<path/to/output> [CHUNK_SIZE=N] [N_CELLS=N] [MODEL_ARGS=\"...\"]"; \
+		echo ""; \
+		echo "Example:"; \
+		echo "  salloc --time=4:00:00 --nodes=1 --cpus-per-task=8 --mem=64G --account=def-jagillis --gres=gpu:1"; \
+		echo "  make hpc-sensitivity-analysis-interactive MODEL=scimilarity INPUT=data/test.h5ad OUTPUT=output/sensitivity.h5ad N_CELLS=1"; \
+		exit 1; \
+	fi
+	@MODEL_NAME="$(MODEL)"; \
+	CONTAINER="transcriptomic-fms-$$MODEL_NAME.sif"; \
+	if [ ! -f "$$CONTAINER" ]; then \
+		echo "Error: Container not found: $$CONTAINER"; \
+		echo "Build it with: make build-container MODEL=$$MODEL_NAME"; \
+		exit 1; \
+	fi
+	@export PYTHONNOUSERSITE=1; \
+	export APPTAINER_USE_GPU=1; \
+	apptainer exec --nv \
+		--bind "$(shell pwd)/data:/transcriptomic-fms/data" \
+		--bind "$(shell pwd)/output:/transcriptomic-fms/output" \
+		--bind "$(shell pwd)/models:/transcriptomic-fms/models" \
+		"transcriptomic-fms-$(MODEL).sif" \
+		python -m transcriptomic_fms.cli.main sensitivity-analysis \
+		--model $(MODEL) \
+		--input $(INPUT) \
+		--output $(OUTPUT) \
+		$(if $(CHUNK_SIZE),--chunk-size $(CHUNK_SIZE),) \
+		$(if $(N_CELLS),--n-cells $(N_CELLS),) \
+		$(MODEL_ARGS)
+
+## Run sensitivity analysis job on HPC (requires SLURM)
+## Usage: make hpc-sensitivity-analysis MODEL=<model_name> INPUT=<path/to/input.h5ad> OUTPUT=<path/to/output> [CHUNK_SIZE=N] [N_CELLS=N] [MODEL_ARGS="..."]
+.PHONY: hpc-sensitivity-analysis
+hpc-sensitivity-analysis:
+	@if [ -z "$(MODEL)" ] || [ -z "$(INPUT)" ] || [ -z "$(OUTPUT)" ]; then \
+		echo "Usage: make hpc-sensitivity-analysis MODEL=<model_name> INPUT=<path/to/input.h5ad> OUTPUT=<path/to/output> [CHUNK_SIZE=N] [N_CELLS=N] [MODEL_ARGS=\"...\"]"; \
+		echo ""; \
+		echo "Example:"; \
+		echo "  make hpc-sensitivity-analysis MODEL=scimilarity INPUT=data/test.h5ad OUTPUT=output/sensitivity.h5ad N_CELLS=10"; \
+		exit 1; \
+	fi
+	@if [ ! -f "transcriptomic_fms/hpc/run_job.sh" ]; then \
+		echo "Error: run_job.sh not found."; \
+		exit 1; \
+	fi
+	@MODEL_NAME="$(MODEL)"; \
+	CONTAINER="transcriptomic-fms-$$MODEL_NAME.sif"; \
+	if [ ! -f "$$CONTAINER" ]; then \
+		echo "Error: Container not found: $$CONTAINER"; \
+		echo "Build it with: make build-container MODEL=$$MODEL_NAME"; \
+		exit 1; \
+	fi
+	mkdir -p run_logs
+	sbatch transcriptomic_fms/hpc/run_job.sh sensitivity-analysis \
+		--model $(MODEL) \
+		--input $(INPUT) \
+		--output $(OUTPUT) \
+		$(if $(CHUNK_SIZE),--chunk-size $(CHUNK_SIZE),) \
+		$(if $(N_CELLS),--n-cells $(N_CELLS),) \
 		$(MODEL_ARGS)
 
 ## Install model-specific dependencies locally

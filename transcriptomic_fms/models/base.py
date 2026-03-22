@@ -166,6 +166,32 @@ class BaseEmbeddingModel(ABC):
         """
         raise NotImplementedError(f"Model {self.model_name} does not support decoding")
 
+    def compute_sensitivity(
+        self,
+        adata: sc.AnnData,
+        output_path: Path,
+        batch_size: Optional[int] = None,
+        n_cells: Optional[int] = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Compute input gradients (sensitivity / Jacobians) and write results to disk.
+
+        Optional method. Implementations should write chunk results to output_path
+        (file or directory) in a defined layout so the CLI can run chunked without
+        loading all results into memory. Default raises NotImplementedError.
+
+        Args:
+            adata: Preprocessed AnnData (e.g. after model.preprocess()).
+            output_path: Path to write results (chunk file or directory).
+            batch_size: Optional batch size for gradient computation.
+            n_cells: Optional cap on number of cells to process.
+            **kwargs: Model-specific parameters.
+        """
+        raise NotImplementedError(
+            f"Model {self.model_name} does not support sensitivity analysis."
+        )
+
     def _get_gene_symbols(self, adata: sc.AnnData) -> list[str]:
         """
         Extract gene symbols from AnnData.

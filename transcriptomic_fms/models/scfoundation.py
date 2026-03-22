@@ -607,6 +607,173 @@ class SCFoundationModel(BaseEmbeddingModel):
         self.validate_embeddings(result_adata)
         return result_adata
 
+    def compute_sensitivity(
+        self,
+        adata: sc.AnnData,
+        output_path: Path,
+        batch_size: Optional[int] = None,
+        n_cells: Optional[int] = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Compute ∂(cell_embedding)/∂(input_token_embeddings), SVD per cell; write to output_path.
+
+        scFoundation uses custom pooling: last position, second-to-last, max over rest, mean over rest
+        (pool_type "all"), or max over all positions. J shape (d_emb, seq_len*d_token). Top k=50
+        SVD kept; full Jacobian discarded. Use CLI --chunk-size to process in chunks.
+        Passes through input adata.obs and adds seq_length. Writes obsm['X_baseline'], obsm['jacobian_U']
+        (n_cells, d_emb, 50) float16, obsm['jacobian_S'] (n_cells, 50) float32.
+        """
+        from scipy.sparse.linalg import svds
+        import torch
+
+        if self.output_type != "cell":
+            raise NotImplementedError(
+                f"sensitivity analysis only supported for output_type='cell', got '{self.output_type}'"
+            )
+
+        if n_cells is not None:
+            adata = adata[:n_cells].copy()
+
+        pretrainmodel, pretrainconfig = self._load_model()
+        device = self.device
+
+        if hasattr(adata.X, "toarray"):
+            X = adata.X.toarray()
+        else:
+            X = np.asarray(adata.X)
+
+        num_cells, num_genes = X.shape
+        if num_genes != 19264:
+            raise ValueError(f"Data must have 19264 genes after preprocessing, got {num_genes}.")
+
+        gene_ids = torch.arange(19266, dtype=torch.long, device=device).unsqueeze(0)
+
+        logger.info(
+            "Sensitivity analysis: %d cells, %d genes, device=%s",
+            num_cells,
+            num_genes,
+            device,
+        )
+
+        baselines_out = []
+        U_out = []
+        S_out = []
+        seqlen_out = []
+
+        from tqdm import tqdm
+
+        for idx in tqdm(
+            range(num_cells),
+            desc="scFoundation sensitivity",
+            unit="cell",
+            leave=True,
+        ):
+            batch = X[idx : idx + 1]
+            batch_full = self._batch_to_tensor(batch, device)
+            batch_gene_ids = gene_ids.expand(1, -1)
+            value_labels = batch_full > 0
+            x, x_padding = gatherData(batch_full, value_labels, pretrainconfig["pad_token_id"])
+            pos_ids, _ = gatherData(batch_gene_ids, value_labels, pretrainconfig["pad_token_id"])
+
+            x_emb = pretrainmodel.token_emb(torch.unsqueeze(x, 2), output_weight=0)
+            x_emb = x_emb.detach().requires_grad_(True)
+            x_in = x_emb + pretrainmodel.pos_emb(pos_ids)
+            geneemb = pretrainmodel.encoder(x_in, x_padding)
+
+            geneemb1 = geneemb[:, -1, :]
+            geneemb2 = geneemb[:, -2, :]
+            geneemb3, _ = torch.max(geneemb[:, :-2, :], dim=1)
+            geneemb4 = torch.mean(geneemb[:, :-2, :], dim=1)
+            if self.pool_type == "all":
+                cell_emb = torch.cat([geneemb1, geneemb2, geneemb3, geneemb4], dim=1)
+            else:
+                cell_emb, _ = torch.max(geneemb, dim=1)
+
+            d_emb = cell_emb.shape[1]
+            k = 50
+            seq_len = x_emb.shape[1]
+            d_in = x_emb.shape[2]
+            d_input = seq_len * d_in
+            J = np.zeros((d_emb, d_input), dtype=np.float64)
+            for i in range(d_emb):
+                if x_emb.grad is not None:
+                    x_emb.grad.zero_()
+                cell_emb[0, i].backward(retain_graph=(i < d_emb - 1))
+                J[i, :] = x_emb.grad[0].detach().cpu().numpy().flatten()
+
+            baseline = cell_emb[0].detach().cpu().numpy()
+            k_svd = min(k, min(J.shape) - 1)
+            if k_svd < 1:
+                U = np.zeros((d_emb, k), dtype=np.float16)
+                S = np.zeros(k, dtype=np.float32)
+            else:
+                U, S, _ = svds(J.astype(np.float64), k=k_svd)
+                U = np.flip(U, axis=1).copy().astype(np.float16)
+                S = np.flip(S).copy().astype(np.float32)
+                if U.shape[1] < k:
+                    U_pad = np.zeros((d_emb, k), dtype=np.float16)
+                    U_pad[:, : U.shape[1]] = U
+                    S_pad = np.zeros(k, dtype=np.float32)
+                    S_pad[: S.shape[0]] = S
+                    U, S = U_pad, S_pad
+
+            baselines_out.append(baseline)
+            U_out.append(U)
+            S_out.append(S)
+            seqlen_out.append(seq_len)
+
+        baselines_arr = np.array(baselines_out, dtype=np.float32)
+        jacobian_U = np.array(U_out, dtype=np.float16)
+        jacobian_S = np.array(S_out, dtype=np.float32)
+        seq_lengths_arr = np.array(seqlen_out)
+
+        obs_out = adata.obs.iloc[:num_cells].copy()
+        obs_out["seq_length"] = seq_lengths_arr
+
+        result_adata = sc.AnnData(
+            X=baselines_arr,
+            obs=obs_out,
+            obsm={
+                "X_baseline": baselines_arr,
+                "jacobian_U": jacobian_U,
+                "jacobian_S": jacobian_S,
+            },
+        )
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        result_adata.write(output_path)
+        logger.info("Wrote sensitivity results to %s (%d cells)", output_path, num_cells)
+
+    def _batch_to_tensor(self, batch: np.ndarray, device: str) -> Any:
+        """Convert a batch (B, 19264) to batch_full (B, 19266) tensor."""
+        import torch
+
+        if self.pre_normalized == "F":
+            totalcounts = batch.sum(axis=1, keepdims=True)
+            batch_proc = np.log1p(batch / totalcounts * 1e4)
+        elif self.pre_normalized == "T":
+            batch_proc = batch
+            totalcounts = batch.sum(axis=1, keepdims=True)
+        elif self.pre_normalized == "A":
+            batch_proc = batch[:, :-1]
+            totalcounts = batch[:, -1:]
+        else:
+            raise ValueError(f"pre_normalized must be T, F or A, got '{self.pre_normalized}'")
+
+        if self.tgthighres[0] == "f":
+            hr = np.log10(totalcounts * float(self.tgthighres[1:]))
+            batch_full = np.concatenate([batch_proc, hr, np.log10(totalcounts)], axis=1)
+        elif self.tgthighres[0] == "a":
+            hr = np.log10(totalcounts) + float(self.tgthighres[1:])
+            batch_full = np.concatenate([batch_proc, hr, np.log10(totalcounts)], axis=1)
+        elif self.tgthighres[0] == "t":
+            hr = np.full_like(totalcounts, float(self.tgthighres[1:]))
+            batch_full = np.concatenate([batch_proc, hr, np.log10(totalcounts)], axis=1)
+        else:
+            raise ValueError(f"tgthighres must start with f, a or t, got '{self.tgthighres}'")
+        return torch.from_numpy(batch_full).float().to(device)
+
     def get_container_command(
         self,
         adata_path: Path,

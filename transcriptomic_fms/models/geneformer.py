@@ -34,6 +34,19 @@ try:
 except ImportError:
     loompy = None
 
+try:
+    import torch
+    from transformers import AutoConfig, AutoModel
+except ImportError:
+    torch = None
+    AutoModel = None
+    AutoConfig = None
+
+try:
+    from datasets import load_from_disk
+except ImportError:
+    load_from_disk = None
+
 # Default Geneformer model HuggingFace repository
 GENEFORMER_MODEL_REPO = "https://huggingface.co/ctheodoris/Geneformer"
 GENEFORMER_MODEL_VERSION = "V1"  # Model version for EmbExtractor (V1 or V2)
@@ -522,6 +535,225 @@ class GeneformerModel(BaseEmbeddingModel):
             )
 
         return output_dir
+
+    def _load_hf_model(self, model_dir: Path):
+        """Load raw HuggingFace transformer from Geneformer model directory."""
+        if AutoModel is None or AutoConfig is None:
+            raise ImportError(
+                "transformers is required for sensitivity analysis. "
+                "Install with: pip install transformers"
+            )
+        config = AutoConfig.from_pretrained(str(model_dir))
+        model = AutoModel.from_pretrained(str(model_dir), config=config)
+        model = model.to(self.device)
+        model.eval()
+        return model
+
+    K_JACOBIAN_SVD = 50
+
+    def _jacobian_svd(
+        self, J: np.ndarray, d_emb: int, d_input: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Truncated SVD of Jacobian J (d_emb, d_input). Returns U (d_emb, 50) float16, S (50) float32."""
+        from scipy.sparse.linalg import svds
+
+        k = self.K_JACOBIAN_SVD
+        k_svd = min(k, min(J.shape) - 1)
+        if k_svd < 1:
+            U = np.zeros((d_emb, k), dtype=np.float16)
+            S = np.zeros(k, dtype=np.float32)
+            return U, S
+        U, S, _ = svds(J.astype(np.float64), k=k_svd)
+        U = np.flip(U, axis=1).copy()
+        S = np.flip(S).copy()
+        U = U.astype(np.float16)
+        S = S.astype(np.float32)
+        if U.shape[1] < k:
+            U_pad = np.zeros((d_emb, k), dtype=np.float16)
+            U_pad[:, : U.shape[1]] = U
+            S_pad = np.zeros(k, dtype=np.float32)
+            S_pad[: S.shape[0]] = S
+            U, S = U_pad, S_pad
+        return U, S
+
+    def _sensitivity_autograd(
+        self,
+        hf_model: Any,
+        input_ids_1d: np.ndarray,
+        max_seq_len: int = 2048,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Compute ∂(mean_pooled_embedding)/∂(input_token_embeddings), then truncated SVD.
+
+        Geneformer uses mean pooling over token positions (no CLS). J has shape
+        (d_emb, seq_len * d_token). Immediately after computing J we reshape to
+        (d_emb, seq_len*d_token), run SVD, keep top k=50 U and S, discard J.
+
+        Returns:
+            baseline_emb: (d_out,) cell embedding
+            jacobian_U: (d_out, 50) float16
+            jacobian_S: (50,) float32
+        """
+        if torch is None:
+            raise ImportError("torch is required for sensitivity analysis.")
+        seq_len = len(input_ids_1d)
+        model = hf_model
+        device = self.device
+        d_in = model.config.hidden_size
+        d_out = model.config.hidden_size
+
+        padded = np.zeros(max_seq_len, dtype=np.int64)
+        padded[:seq_len] = input_ids_1d
+        att_mask = np.zeros(max_seq_len, dtype=np.int64)
+        att_mask[:seq_len] = 1
+
+        ids_t = torch.tensor(padded, dtype=torch.long).unsqueeze(0).to(device)
+        mask_t = torch.tensor(att_mask, dtype=torch.long).unsqueeze(0).to(device)
+
+        with torch.no_grad():
+            word_emb = model.embeddings.word_embeddings(ids_t)
+        word_emb = word_emb.detach().requires_grad_(True)
+
+        position_ids = torch.arange(max_seq_len, dtype=torch.long, device=device).unsqueeze(0)
+        position_emb = model.embeddings.position_embeddings(position_ids)
+        if hasattr(model.embeddings, "token_type_embeddings"):
+            token_type_ids = torch.zeros_like(ids_t)
+            token_type_emb = model.embeddings.token_type_embeddings(token_type_ids)
+        else:
+            token_type_emb = 0
+
+        full_emb = word_emb + position_emb + token_type_emb
+        if hasattr(model.embeddings, "LayerNorm"):
+            full_emb = model.embeddings.LayerNorm(full_emb)
+        if hasattr(model.embeddings, "dropout"):
+            full_emb = model.embeddings.dropout(full_emb)
+
+        extended_mask = model.get_extended_attention_mask(mask_t, ids_t.shape, device=device)
+        encoder_out = model.encoder(full_emb, attention_mask=extended_mask)
+        hidden = encoder_out.last_hidden_state
+
+        mask_f = mask_t.unsqueeze(-1).float()
+        cell_emb = (hidden * mask_f).sum(1) / mask_f.sum(1)
+
+        d_input = seq_len * d_in
+        J = np.zeros((d_out, d_input), dtype=np.float64)
+        for i in range(d_out):
+            if word_emb.grad is not None:
+                word_emb.grad.zero_()
+            cell_emb[0, i].backward(retain_graph=(i < d_out - 1))
+            J[i, :] = word_emb.grad[0, :seq_len, :].detach().cpu().numpy().flatten()
+
+        baseline = cell_emb[0].detach().cpu().numpy()
+        U, S = self._jacobian_svd(J, d_out, d_input)
+        return baseline, U, S
+
+    def compute_sensitivity(
+        self,
+        adata: sc.AnnData,
+        output_path: Path,
+        batch_size: Optional[int] = None,
+        n_cells: Optional[int] = None,
+        max_seq_len: int = 2048,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Compute ∂(mean_pooled_embedding)/∂(token_embeddings), SVD per cell; write to output_path.
+
+        Cells are processed in the order of adata (use CLI --chunk-size to run in chunks).
+        Passes through input adata.obs for output cells and adds seq_length. Writes obsm['X_baseline'] (n_cells, d_emb),
+        obsm['jacobian_U'] (n_cells, d_emb, 50) float16, obsm['jacobian_S'] (n_cells, 50) float32.
+        Full Jacobian is not stored.
+        """
+        if n_cells is not None:
+            adata = adata[:n_cells].copy()
+        model_dir = self._find_actual_model_dir()
+
+        logger.info("Loading HuggingFace model for sensitivity analysis...")
+        hf_model = self._load_hf_model(model_dir)
+
+        logger.info("Tokenising data...")
+        if load_from_disk is None:
+            raise ImportError(
+                "datasets is required for sensitivity analysis. pip install datasets"
+            )
+
+        cell_type_col = "cell_type" if "cell_type" in adata.obs.columns else None
+        cell_ids_out = []
+        cell_types_out = []
+        baselines_out = []
+        U_out = []
+        S_out = []
+        seqlen_out = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tok_dir = Path(tmpdir) / "tokenized"
+            tok_dir.mkdir()
+            self._tokenize_data(adata, tok_dir)
+            dataset_dirs = [
+                d for d in tok_dir.iterdir() if d.is_dir() and d.name.endswith(".dataset")
+            ]
+            if not dataset_dirs:
+                dataset_dirs = [d for d in tok_dir.iterdir() if d.is_dir()]
+            if not dataset_dirs:
+                raise RuntimeError(f"No tokenised dataset found in {tok_dir}")
+            dataset = load_from_disk(str(dataset_dirs[0]))
+
+            id_to_row = (
+                {str(cid): i for i, cid in enumerate(dataset["cell_id"])}
+                if "cell_id" in dataset.column_names
+                else {str(i): i for i in range(len(dataset))}
+            )
+
+            from tqdm import tqdm
+
+            n_adata = len(adata)
+            logger.info("Sensitivity analysis: %d cells (tokenised)", n_adata)
+            for obs_idx in tqdm(
+                range(n_adata),
+                desc="Geneformer sensitivity",
+                unit="cell",
+                leave=True,
+            ):
+                cell_id = str(adata.obs_names[obs_idx])
+                ct = adata.obs[cell_type_col].iloc[obs_idx] if cell_type_col else "unknown"
+                row_idx = id_to_row.get(cell_id)
+                if row_idx is None:
+                    logger.warning("Skipping %s — not in tokenised dataset", cell_id)
+                    continue
+                input_ids = np.array(dataset[row_idx]["input_ids"], dtype=np.int64)
+                seq_len = len(input_ids)
+
+                baseline, U, S = self._sensitivity_autograd(
+                    hf_model, input_ids, max_seq_len=max_seq_len
+                )
+                cell_ids_out.append(cell_id)
+                cell_types_out.append(ct)
+                baselines_out.append(baseline)
+                U_out.append(U)
+                S_out.append(S)
+                seqlen_out.append(seq_len)
+
+        baselines_arr = np.array(baselines_out, dtype=np.float32)
+        jacobian_U = np.array(U_out, dtype=np.float16)
+        jacobian_S = np.array(S_out, dtype=np.float32)
+        seq_lengths_arr = np.array(seqlen_out)
+
+        obs_out = adata.obs.loc[cell_ids_out].copy()
+        obs_out["seq_length"] = seq_lengths_arr
+
+        result_adata = sc.AnnData(
+            X=baselines_arr,
+            obs=obs_out,
+            obsm={
+                "X_baseline": baselines_arr,
+                "jacobian_U": jacobian_U,
+                "jacobian_S": jacobian_S,
+            },
+        )
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        result_adata.write(output_path)
+        logger.info("Wrote sensitivity results to %s (%d cells)", output_path, len(cell_ids_out))
 
     def embed(
         self,

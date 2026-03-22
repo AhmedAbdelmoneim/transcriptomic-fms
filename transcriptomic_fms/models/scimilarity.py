@@ -397,6 +397,144 @@ class SCimilarityModel(BaseEmbeddingModel):
 
         return result_adata
 
+    K_JACOBIAN_SVD = 50
+
+    def _jacobian_svd(
+        self, J: np.ndarray, d_emb: int, d_input: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Truncated SVD of Jacobian J (d_emb, d_input). Returns U (d_emb, 50) float16, S (50) float32."""
+        from scipy.sparse.linalg import svds
+
+        k = self.K_JACOBIAN_SVD
+        k_svd = min(k, min(J.shape) - 1)
+        if k_svd < 1:
+            U = np.zeros((d_emb, k), dtype=np.float16)
+            S = np.zeros(k, dtype=np.float32)
+            return U, S
+        U, S, _ = svds(J.astype(np.float64), k=k_svd)
+        U = np.flip(U, axis=1).copy()
+        S = np.flip(S).copy()
+        U = U.astype(np.float16)
+        S = S.astype(np.float32)
+        if U.shape[1] < k:
+            U_pad = np.zeros((d_emb, k), dtype=np.float16)
+            U_pad[:, : U.shape[1]] = U
+            S_pad = np.zeros(k, dtype=np.float32)
+            S_pad[: S.shape[0]] = S
+            U, S = U_pad, S_pad
+        return U, S
+
+    def compute_sensitivity(
+        self,
+        adata: sc.AnnData,
+        output_path: Path,
+        batch_size: Optional[int] = None,
+        n_cells: Optional[int] = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Compute ∂(embedding)/∂(input_expression), SVD per cell; write to output_path.
+
+        SCimilarity has no token sequence: encoder(expression) -> embedding. J shape (d_emb, n_genes).
+        Reshape to (d_emb, n_genes), top k=50 SVD, discard J. Use CLI --chunk-size to process in chunks.
+        Passes through input adata.obs and adds seq_length=n_genes. Writes obsm['X_baseline'],
+        obsm['jacobian_U'] (n_cells, d_emb, 50) float16, obsm['jacobian_S'] (n_cells, 50) float32.
+        """
+        import torch
+
+        cell_embedding = self._get_model()
+        encoder = getattr(cell_embedding, "model", None)
+        if encoder is None:
+            raise NotImplementedError(
+                "SCimilarity CellEmbedding has no 'model' (Encoder) attribute; "
+                "cannot compute gradients."
+            )
+
+        try:
+            device = next(encoder.parameters()).device
+        except StopIteration:
+            device = torch.device("cuda" if self.use_gpu else "cpu")
+
+        if n_cells is not None:
+            adata = adata[:n_cells].copy()
+
+        if hasattr(adata.X, "toarray"):
+            X = adata.X.toarray()
+        else:
+            X = np.asarray(adata.X, dtype=np.float32)
+
+        n_cells_data, n_genes = X.shape
+
+        logger.info(
+            "Sensitivity analysis: %d cells, %d genes, device=%s",
+            n_cells_data,
+            n_genes,
+            device,
+        )
+
+        baselines_out = []
+        U_out = []
+        S_out = []
+
+        def _embed_single(inp: torch.Tensor) -> torch.Tensor:
+            out = encoder(inp.unsqueeze(0))
+            if isinstance(out, tuple):
+                out = out[0]
+            return out.squeeze(0)
+
+        encoder.eval()
+        from tqdm import tqdm
+
+        for idx in tqdm(
+            range(n_cells_data),
+            desc="SCimilarity sensitivity",
+            unit="cell",
+            leave=True,
+        ):
+            x = torch.from_numpy(X[idx : idx + 1]).to(device, dtype=torch.float32)
+            x_1d = x.squeeze(0)
+
+            emb = encoder(x)
+            if isinstance(emb, tuple):
+                emb = emb[0]
+            d_emb = emb.shape[1]
+            baseline = emb[0].detach().cpu().numpy()
+
+            J_tensor = torch.autograd.functional.jacobian(_embed_single, x_1d, vectorize=True)
+            J = J_tensor.detach().cpu().numpy().astype(np.float64)
+
+            U, S = self._jacobian_svd(J, d_emb, n_genes)
+
+            baselines_out.append(baseline)
+            U_out.append(U)
+            S_out.append(S)
+
+        baselines_arr = np.array(baselines_out, dtype=np.float32)
+        jacobian_U = np.array(U_out, dtype=np.float16)
+        jacobian_S = np.array(S_out, dtype=np.float32)
+
+        obs_out = adata.obs.iloc[:n_cells_data].copy()
+        obs_out["seq_length"] = n_genes
+
+        result_adata = sc.AnnData(
+            X=baselines_arr,
+            obs=obs_out,
+            obsm={
+                "X_baseline": baselines_arr,
+                "jacobian_U": jacobian_U,
+                "jacobian_S": jacobian_S,
+            },
+        )
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        result_adata.write(output_path)
+        logger.info(
+            "Wrote sensitivity results to %s (%d cells, %d genes)",
+            output_path,
+            n_cells_data,
+            n_genes,
+        )
+
     def validate_embeddings(self, adata: sc.AnnData) -> None:
         """
         Validate that embeddings have correct shape and properties.

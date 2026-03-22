@@ -23,6 +23,21 @@ except ImportError:
     Preprocessor = None
     embed_data = None
 
+# For sensitivity we need the transformer and vocab directly (same as tasks/cell_emb)
+try:
+    from scgpt.model import TransformerModel as _TransformerModel
+    from scgpt.tokenizer import GeneVocab as _GeneVocab
+    from scgpt.utils import load_pretrained as _load_pretrained
+except ImportError:
+    try:
+        from scgpt.model.model import TransformerModel as _TransformerModel
+        from scgpt.tokenizer.gene_tokenizer import GeneVocab as _GeneVocab
+        from scgpt.utils.util import load_pretrained as _load_pretrained
+    except ImportError:
+        _TransformerModel = None
+        _GeneVocab = None
+        _load_pretrained = None
+
 try:
     import gdown
 except ImportError:
@@ -400,6 +415,235 @@ class SCGPTModel(BaseEmbeddingModel):
 
         # Additional scGPT-specific validation could go here if needed
         # For now, base validation is sufficient
+
+    K_JACOBIAN_SVD = 50
+
+    def _jacobian_svd(
+        self, J: np.ndarray, d_emb: int, d_input: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Truncated SVD of Jacobian J (d_emb, d_input). Returns U (d_emb, 50) float16, S (50) float32."""
+        from scipy.sparse.linalg import svds
+
+        k = self.K_JACOBIAN_SVD
+        k_svd = min(k, min(J.shape) - 1)
+        if k_svd < 1:
+            U = np.zeros((d_emb, k), dtype=np.float16)
+            S = np.zeros(k, dtype=np.float32)
+            return U, S
+        U, S, _ = svds(J.astype(np.float64), k=k_svd)
+        U = np.flip(U, axis=1).copy()
+        S = np.flip(S).copy()
+        U = U.astype(np.float16)
+        S = S.astype(np.float32)
+        if U.shape[1] < k:
+            U_pad = np.zeros((d_emb, k), dtype=np.float16)
+            U_pad[:, : U.shape[1]] = U
+            S_pad = np.zeros(k, dtype=np.float32)
+            S_pad[: S.shape[0]] = S
+            U, S = U_pad, S_pad
+        return U, S
+
+    def compute_sensitivity(
+        self,
+        adata: sc.AnnData,
+        output_path: Path,
+        batch_size: Optional[int] = None,
+        n_cells: Optional[int] = None,
+        max_length: int = 1200,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Compute ∂(CLS cell embedding)/∂(input expression values), SVD per cell; write to output_path.
+
+        Uses the same pipeline as embed_data: vocab, model._encode, CLS token at position 0.
+        Passes through input adata.obs and adds seq_length. Writes obsm['X_baseline'],
+        obsm['jacobian_U'] (n_cells, d_emb, 50) float16, obsm['jacobian_S'] (n_cells, 50) float32.
+        """
+        if _TransformerModel is None or _GeneVocab is None or _load_pretrained is None:
+            raise ImportError(
+                "scGPT sensitivity requires internal modules (model, tokenizer, utils). "
+                "Ensure scgpt is installed and the package structure provides TransformerModel, "
+                "GeneVocab, and load_pretrained."
+            )
+        if self.model_dir is None:
+            raise ValueError("model_dir must be set for sensitivity analysis.")
+        model_dir = Path(self.model_dir)
+        vocab_file = model_dir / "vocab.json"
+        model_config_file = model_dir / "args.json"
+        model_file = model_dir / "best_model.pt"
+        if not model_config_file.exists() or not model_file.exists() or not vocab_file.exists():
+            raise FileNotFoundError(
+                f"Model files not found in {model_dir}. Need args.json, best_model.pt, vocab.json."
+            )
+
+        device = torch.device(self.device if isinstance(self.device, str) else self.device)
+        gene_col = "gene_symbols"
+        if gene_col not in adata.var.columns:
+            adata = adata.copy()
+            adata.var[gene_col] = self._get_gene_symbols(adata)
+
+        vocab = _GeneVocab.from_file(str(vocab_file))
+        pad_token = "<pad>"
+        special_tokens = [pad_token, "<cls>", "<eoc>"]
+        for s in special_tokens:
+            if s not in vocab:
+                vocab.append_token(s)
+        adata.var["id_in_vocab"] = [
+            vocab[gene] if gene in vocab else -1 for gene in adata.var[gene_col]
+        ]
+        in_vocab = np.array(adata.var["id_in_vocab"]) >= 0
+        adata = adata[:, in_vocab].copy()
+        gene_ids_var = np.array(adata.var["id_in_vocab"])
+
+        with open(model_config_file, "r") as f:
+            model_configs = json.load(f)
+        vocab.set_default_index(vocab[pad_token])
+        pad_value = float(model_configs.get("pad_value", 0.0))
+        pad_token_id = vocab[model_configs["pad_token"]]
+        cls_id = vocab["<cls>"]
+
+        model = _TransformerModel(
+            ntoken=len(vocab),
+            d_model=model_configs["embsize"],
+            nhead=model_configs["nheads"],
+            d_hid=model_configs["d_hid"],
+            nlayers=model_configs["nlayers"],
+            nlayers_cls=model_configs.get("n_layers_cls", 3),
+            n_cls=1,
+            vocab=vocab,
+            dropout=model_configs.get("dropout", 0.1),
+            pad_token=model_configs.get("pad_token", "<pad>"),
+            pad_value=model_configs["pad_value"],
+            do_mvc=True,
+            do_dab=False,
+            use_batch_labels=False,
+            domain_spec_batchnorm=False,
+            explicit_zero_prob=False,
+            use_fast_transformer=False,
+            fast_transformer_backend="flash",
+            pre_norm=False,
+            input_emb_style=model_configs.get("input_emb_style", "continuous"),
+            n_input_bins=model_configs.get("n_input_bins"),
+        )
+        _load_pretrained(model, torch.load(model_file, map_location=device), verbose=False)
+        model.to(device)
+        model.eval()
+
+        if hasattr(adata.X, "toarray"):
+            count_matrix = adata.X.toarray()
+        else:
+            count_matrix = np.asarray(adata.X, dtype=np.float32)
+        if n_cells is not None:
+            adata = adata[:n_cells].copy()
+            count_matrix = count_matrix[:n_cells]
+        n_cells_data = count_matrix.shape[0]
+        n_genes = count_matrix.shape[1]
+
+        logger.info(
+            "Sensitivity analysis: %d cells, %d genes, device=%s, max_length=%d",
+            n_cells_data,
+            n_genes,
+            device,
+            max_length,
+        )
+
+        baselines_out = []
+        U_out = []
+        S_out = []
+        seqlen_out = []
+
+        from tqdm import tqdm
+
+        for idx in tqdm(
+            range(n_cells_data),
+            desc="scGPT sensitivity",
+            unit="cell",
+            leave=True,
+        ):
+            row = count_matrix[idx]
+            nonzero_idx = np.nonzero(row)[0]
+            values = row[nonzero_idx].astype(np.float32)
+            genes = gene_ids_var[nonzero_idx]
+            genes = np.insert(genes, 0, cls_id)
+            values = np.insert(values, 0, pad_value)
+            seq_len = len(genes)
+            if seq_len > max_length:
+                genes = genes[:max_length]
+                values = values[:max_length]
+                seq_len = max_length
+            input_gene_ids = np.full(max_length, pad_token_id, dtype=np.int64)
+            input_gene_ids[:seq_len] = genes
+            expr_np = np.zeros(max_length, dtype=np.float32)
+            expr_np[:seq_len] = values
+            expr_np[seq_len:] = pad_value
+
+            input_gene_ids_t = torch.from_numpy(input_gene_ids).long().unsqueeze(0).to(device)
+            expr_t = torch.from_numpy(expr_np).float().unsqueeze(0).to(device)
+            expr_t.requires_grad_(True)
+            src_key_padding_mask = input_gene_ids_t.eq(pad_token_id)
+
+            with torch.cuda.amp.autocast(enabled=(device.type == "cuda")):
+                embeddings = model._encode(
+                    input_gene_ids_t,
+                    expr_t,
+                    src_key_padding_mask,
+                    batch_labels=None,
+                )
+            cell_emb = embeddings[:, 0, :].squeeze(0)
+            baseline = cell_emb.detach().cpu().numpy()
+            d_emb = baseline.shape[0]
+
+            def _cell_emb_from_expr(expr_flat: torch.Tensor) -> torch.Tensor:
+                e = expr_flat.unsqueeze(0)
+                with torch.cuda.amp.autocast(enabled=(device.type == "cuda")):
+                    out = model._encode(
+                        input_gene_ids_t,
+                        e,
+                        src_key_padding_mask,
+                        batch_labels=None,
+                    )
+                return out[:, 0, :].squeeze(0)
+
+            J_tensor = torch.autograd.functional.jacobian(
+                _cell_emb_from_expr,
+                expr_t.squeeze(0),
+                vectorize=True,
+            )
+            J_full = J_tensor.detach().cpu().numpy().astype(np.float64)
+            J = J_full[:, :seq_len]
+            d_input = seq_len
+            U, S = self._jacobian_svd(J, d_emb, d_input)
+
+            baselines_out.append(baseline)
+            U_out.append(U)
+            S_out.append(S)
+            seqlen_out.append(seq_len)
+
+        baselines_arr = np.array(baselines_out, dtype=np.float32)
+        jacobian_U = np.array(U_out, dtype=np.float16)
+        jacobian_S = np.array(S_out, dtype=np.float32)
+        seq_lengths_arr = np.array(seqlen_out)
+
+        obs_out = adata.obs.copy()
+        obs_out["seq_length"] = seq_lengths_arr
+
+        result_adata = sc.AnnData(
+            X=baselines_arr,
+            obs=obs_out,
+            obsm={
+                "X_baseline": baselines_arr,
+                "jacobian_U": jacobian_U,
+                "jacobian_S": jacobian_S,
+            },
+        )
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        result_adata.write(output_path)
+        logger.info(
+            "Wrote sensitivity results to %s (%d cells)",
+            output_path,
+            n_cells_data,
+        )
 
     def get_container_command(
         self,
