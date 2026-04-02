@@ -1,0 +1,59 @@
+Bootstrap: docker
+From: python:3.11-bookworm
+
+%files
+    pyproject.toml /transcriptomic-fms/
+    README.md /transcriptomic-fms/
+    transcriptomic_fms /transcriptomic-fms/transcriptomic_fms
+
+%labels
+    Author "Ahmed Sallam"
+    Version "0.1.0"
+    Description "PCA baseline (scanpy + scikit-learn, CPU-only)"
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        wget \
+        pkg-config \
+        libhdf5-dev \
+        zlib1g-dev \
+        tzdata \
+        && rm -rf /var/lib/apt/lists/*
+
+    pip install --upgrade pip setuptools wheel packaging
+
+    # PCA uses scanpy + sklearn only (no PyTorch in this image)
+    pip install \
+        "numpy" "pandas" "scanpy" "anndata" "scipy" "scikit-learn" \
+        "h5py" "tables" "numba" \
+        "requests" "tqdm"
+
+    pip install \
+        "ipython" "jupyterlab" "matplotlib" "notebook" "python-dotenv" "ruff"
+
+    cd /transcriptomic-fms
+    pip install --no-deps --ignore-requires-python -e .
+
+    mkdir -p /transcriptomic-fms/data
+    mkdir -p /transcriptomic-fms/output
+    mkdir -p /transcriptomic-fms/models
+
+    echo "=== VERSION CHECK ==="
+    pip list | grep -E "numpy|scanpy|scikit-learn|anndata"
+
+%environment
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+    export DEBIAN_FRONTEND=noninteractive
+    export PYTHONPATH="/transcriptomic-fms:$PYTHONPATH"
+    export PYTHONUNBUFFERED=1
+    export PYTHONNOUSERSITE=1
+    export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+    export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+    export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
+%runscript
+    exec python -m transcriptomic_fms.cli.main "$@"

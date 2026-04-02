@@ -39,6 +39,10 @@ class PCAModel(BaseEmbeddingModel):
         self.pca_model: Optional[PCA] = None
         self.hvg_genes: Optional[list[str]] = None
 
+    def get_container_name(self) -> Optional[str]:
+        """Return container id for Apptainer image transcriptomic-fms-pca.sif."""
+        return "pca"
+
     def preprocess(self, adata: sc.AnnData, output_path: Optional[Path] = None) -> sc.AnnData:
         """Preprocess data: normalize, log transform, optionally select HVGs."""
         adata = adata.copy()
