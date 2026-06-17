@@ -27,6 +27,24 @@ requirements:
 list-models:
 	$(UV) run python -m transcriptomic_fms.cli.main list
 
+## Validate h5ad embeddability without loading model packages
+## Usage: make pre-embedding-check INPUT=<path/to/file-or-dir.h5ad> [MODEL=<model_name>] [PRECHECK_ARGS="..."]
+## Example: make pre-embedding-check INPUT=data/test.h5ad
+.PHONY: pre-embedding-check
+pre-embedding-check:
+	@if [ -z "$(INPUT)" ]; then \
+		echo "Usage: make pre-embedding-check INPUT=<path/to/file-or-dir.h5ad> [MODEL=<model_name>] [PRECHECK_ARGS=\"...\"]"; \
+		echo ""; \
+		echo "Examples:"; \
+		echo "  make pre-embedding-check INPUT=data/test.h5ad"; \
+		echo "  make pre-embedding-check INPUT=data MODEL=scgpt"; \
+		exit 1; \
+	fi
+	$(UV) run python -m transcriptomic_fms.cli.main pre-embedding-check \
+		--input $(INPUT) \
+		$(if $(MODEL),--model $(MODEL),) \
+		$(PRECHECK_ARGS)
+
 ## Generate embeddings locally
 ## Usage: make embed MODEL=<model_name> INPUT=<path/to/input.h5ad> OUTPUT=<path/to/output.npy> [MODEL_ARGS="--arg1 value1 --arg2"]
 ## Example: make embed MODEL=pca INPUT=data/test.h5ad OUTPUT=output/embeddings.npy MODEL_ARGS="--n-components 100 --use-hvg"

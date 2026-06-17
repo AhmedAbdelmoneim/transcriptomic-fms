@@ -23,6 +23,19 @@ uv sync --extra scgpt
 make list-models
 ```
 
+### Pre-Embedding Check
+
+Validate that an `.h5ad` file or directory is ready for the bundled embedding models without
+installing model-specific packages or checkpoints:
+
+```bash
+make pre-embedding-check INPUT=data/test.h5ad
+make pre-embedding-check INPUT=data MODEL=scgpt
+```
+
+By default this checks all bundled vocabularies under `transcriptomic_fms/models/vocabs`, including
+Geneformer's GC30M token dictionary.
+
 ### Generate Embeddings
 
 **Locally:**

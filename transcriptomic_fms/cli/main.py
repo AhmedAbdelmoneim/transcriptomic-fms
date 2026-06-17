@@ -405,6 +405,38 @@ def install_model_command(args: argparse.Namespace) -> None:
     print("Run the command above to actually install dependencies.")
 
 
+def pre_embedding_check_command(args: argparse.Namespace) -> None:
+    """Validate h5ad files before running model embedding."""
+    from transcriptomic_fms.validation.embed_inputs import (
+        format_report,
+        load_bundled_model_gene_lists,
+        validate_path,
+    )
+
+    selected_models = list(args.models or [])
+    if args.model:
+        selected_models.extend(args.model)
+    selected_models = selected_models or None
+
+    try:
+        model_gene_lists = load_bundled_model_gene_lists(models=selected_models)
+        reports, exit_code = validate_path(
+            Path(args.input),
+            gene_name_column=args.gene_name_column,
+            ensembl_id_column=args.ensembl_id_column,
+            model_gene_lists=model_gene_lists,
+            min_symbol_overlap=args.min_symbol_overlap,
+            min_ensembl_overlap=args.min_ensembl_overlap,
+            skip_embed_outputs=not args.include_embed_outputs,
+        )
+    except (FileNotFoundError, NotADirectoryError, ValueError, KeyError) as e:
+        logger.error(f"Pre-embedding check failed: {e}")
+        sys.exit(2)
+
+    print(format_report(reports, input_path=Path(args.input)))
+    sys.exit(exit_code)
+
+
 def main() -> None:
     """Main CLI entry point."""
     # Set up logging
@@ -481,6 +513,59 @@ def main() -> None:
         "--model", required=True, help="Model name to install dependencies for"
     )
     install_parser.set_defaults(func=install_model_command)
+
+    # Pre-embedding validation command
+    check_parser = subparsers.add_parser(
+        "pre-embedding-check",
+        help="Validate h5ad files before embedding without loading model packages",
+        allow_abbrev=False,
+    )
+    check_parser.add_argument(
+        "--input",
+        required=True,
+        type=Path,
+        help="Input .h5ad file or directory containing .h5ad files",
+    )
+    check_parser.add_argument(
+        "--model",
+        action="append",
+        default=[],
+        help="Model vocab to check (repeatable). Defaults to all bundled vocabs.",
+    )
+    check_parser.add_argument(
+        "--models",
+        nargs="+",
+        default=[],
+        help="Model vocabs to check. Defaults to all bundled vocabs.",
+    )
+    check_parser.add_argument(
+        "--min-symbol-overlap",
+        type=float,
+        default=0.1,
+        help="Minimum fraction of symbol-based model vocab genes required",
+    )
+    check_parser.add_argument(
+        "--min-ensembl-overlap",
+        type=float,
+        default=0.1,
+        help="Minimum fraction of Ensembl-based model vocab genes required",
+    )
+    check_parser.add_argument(
+        "--gene-name-column",
+        default="gene_name",
+        help="Expected gene-symbol column in adata.var",
+    )
+    check_parser.add_argument(
+        "--ensembl-id-column",
+        default="ensembl_id",
+        help="Expected Ensembl ID column in adata.var",
+    )
+    check_parser.add_argument(
+        "--include-embed-outputs",
+        action="store_true",
+        help="Include existing *_embeddings.h5ad and *_emb.h5ad files in directory checks",
+    )
+    check_parser.set_defaults(func=pre_embedding_check_command)
 
     # Parse known arguments and allow unknown ones for model-specific params
     args, unknown = parser.parse_known_args()
