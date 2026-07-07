@@ -2,6 +2,7 @@
 
 import argparse
 import gc
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -15,6 +16,38 @@ from transcriptomic_fms.utils.logging import get_logger, setup_logging
 
 # Set up logging
 logger = get_logger(__name__)
+
+
+def _log_cuda_runtime() -> None:
+    """Log the CUDA devices visible to PyTorch for GPU/MIG auditability."""
+    try:
+        import torch
+    except ImportError:
+        logger.info("CUDA runtime: torch is not installed")
+        return
+
+    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "<unset>")
+    if not torch.cuda.is_available():
+        logger.info("CUDA runtime: unavailable (CUDA_VISIBLE_DEVICES=%s)", cuda_visible_devices)
+        return
+
+    device_count = torch.cuda.device_count()
+    logger.info(
+        "CUDA runtime: available devices=%d CUDA_VISIBLE_DEVICES=%s",
+        device_count,
+        cuda_visible_devices,
+    )
+    for idx in range(device_count):
+        props = torch.cuda.get_device_properties(idx)
+        total_gib = props.total_memory / 1024**3
+        logger.info(
+            "CUDA device %d: name=%s total_memory=%.2f GiB capability=%s.%s",
+            idx,
+            props.name,
+            total_gib,
+            props.major,
+            props.minor,
+        )
 
 
 def _load_hvg_list(hvg_list_path: str) -> list[str]:
@@ -140,6 +173,7 @@ def embed_command(args: argparse.Namespace, model_args: dict[str, Any]) -> None:
     try:
         logger.info(f"Loading model: {args.model}")
         model = get_model(args.model, **model_args)
+        _log_cuda_runtime()
     except ImportError as e:
         # Check if this is a missing dependency error
         dep_group = None
@@ -413,13 +447,8 @@ def pre_embedding_check_command(args: argparse.Namespace) -> None:
         validate_path,
     )
 
-    selected_models = list(args.models or [])
-    if args.model:
-        selected_models.extend(args.model)
-    selected_models = selected_models or None
-
     try:
-        model_gene_lists = load_bundled_model_gene_lists(models=selected_models)
+        model_gene_lists = load_bundled_model_gene_lists()
         reports, exit_code = validate_path(
             Path(args.input),
             gene_name_column=args.gene_name_column,
@@ -527,28 +556,16 @@ def main() -> None:
         help="Input .h5ad file or directory containing .h5ad files",
     )
     check_parser.add_argument(
-        "--model",
-        action="append",
-        default=[],
-        help="Model vocab to check (repeatable). Defaults to all bundled vocabs.",
-    )
-    check_parser.add_argument(
-        "--models",
-        nargs="+",
-        default=[],
-        help="Model vocabs to check. Defaults to all bundled vocabs.",
-    )
-    check_parser.add_argument(
         "--min-symbol-overlap",
         type=float,
         default=0.1,
-        help="Minimum fraction of symbol-based model vocab genes required",
+        help="Minimum fraction of dataset symbol genes required in the model vocab",
     )
     check_parser.add_argument(
         "--min-ensembl-overlap",
         type=float,
         default=0.1,
-        help="Minimum fraction of Ensembl-based model vocab genes required",
+        help="Minimum fraction of dataset Ensembl genes required in the model vocab",
     )
     check_parser.add_argument(
         "--gene-name-column",

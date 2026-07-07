@@ -30,7 +30,6 @@ installing model-specific packages or checkpoints:
 
 ```bash
 make pre-embedding-check INPUT=data/test.h5ad
-make pre-embedding-check INPUT=data MODEL=scgpt
 ```
 
 By default this checks all bundled vocabularies under `transcriptomic_fms/models/vocabs`, including

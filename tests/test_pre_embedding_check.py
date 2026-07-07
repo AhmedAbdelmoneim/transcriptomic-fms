@@ -48,8 +48,8 @@ class TestPreEmbeddingCheck(unittest.TestCase):
             report = validate_h5ad_file(
                 path,
                 model_gene_lists={
-                    "scgpt": ["GENE0", "GENE1", "GENE2"],
-                    "geneformer": ["ENSG000000000000", "ENSG000000000001"],
+                    "scgpt": [f"GENE{i}" for i in range(8)],
+                    "geneformer": [f"ENSG0000000000{i:02d}" for i in range(8)],
                 },
             )
             self.assertEqual(report.worst_level, Level.OK)
@@ -109,7 +109,9 @@ class TestPreEmbeddingCheck(unittest.TestCase):
                 min_ensembl_overlap=0.5,
             )
             self.assertEqual(report.worst_level, Level.ERROR)
-            self.assertTrue(any("geneformer" in f.message for f in report.findings))
+            self.assertTrue(
+                any("geneformer" in f.message and "dataset Ensembl IDs" in f.message for f in report.findings)
+            )
 
 
 if __name__ == "__main__":

@@ -15,6 +15,8 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
+from transcriptomic_fms.utils.gene_ids import looks_like_ensembl_id, normalize_ensembl_set
+
 _ENSEMBL_COL_CANDIDATES = (
     "ensembl_id",
     "ensembl_gene_id",
@@ -37,7 +39,6 @@ _SYMBOL_COL_CANDIDATES = (
 _EMBED_OUTPUT_SUFFIXES = ("_embeddings.h5ad", "_emb.h5ad")
 _ENSEMBL_MODELS = frozenset({"geneformer", "scconcept"})
 _SPECIAL_TOKEN_RE = re.compile(r"^<.*>$")
-_ENSEMBL_RE = re.compile(r"^ENS[A-Z]*G\d+(?:\.\d+)?$")
 
 
 class Level(str, Enum):
@@ -81,7 +82,7 @@ def _first_var_column(adata: ad.AnnData, candidates: Sequence[str]) -> str | Non
 
 
 def _looks_like_ensembl_id(value: object) -> bool:
-    return bool(_ENSEMBL_RE.match(str(value).strip()))
+    return looks_like_ensembl_id(value)
 
 
 def _sample_matrix_values(x: sp.spmatrix | np.ndarray, max_values: int = 200_000) -> np.ndarray:
@@ -179,13 +180,7 @@ def _normalize_gene_set(genes: Iterable[str], *, uppercase: bool = False) -> set
 
 
 def _normalize_ensembl_set(genes: Iterable[str]) -> set[str]:
-    return {
-        str(gene).strip().split(".", maxsplit=1)[0]
-        for gene in genes
-        if str(gene).strip()
-        and str(gene).strip().lower() != "nan"
-        and not _SPECIAL_TOKEN_RE.match(str(gene).strip())
-    }
+    return normalize_ensembl_set(genes)
 
 
 def _read_json_genes(path: Path) -> list[str]:
@@ -226,9 +221,9 @@ def load_bundled_model_gene_lists(
     loaders = {
         "scgpt": lambda: _read_json_genes(vocabs_dir / "scgpt_vocab.json"),
         "scimilarity": lambda: _read_text_genes(vocabs_dir / "scimilarity_vocab.tsv"),
-        "scfoundation": lambda: pd.read_csv(
-            vocabs_dir / "scfoundation_vocab.tsv", sep="\t"
-        )["gene_name"]
+        "scfoundation": lambda: pd.read_csv(vocabs_dir / "scfoundation_vocab.tsv", sep="\t")[
+            "gene_name"
+        ]
         .dropna()
         .astype(str)
         .tolist(),
@@ -370,7 +365,7 @@ def check_model_gene_overlap(
     min_symbol_overlap: float = 0.1,
     min_ensembl_overlap: float = 0.1,
 ) -> list[Finding]:
-    """Report overlap between file genes and bundled model vocabularies."""
+    """Report the fraction of dataset genes present in bundled model vocabularies."""
     findings: list[Finding] = []
     if not model_gene_lists:
         return findings
@@ -382,35 +377,52 @@ def check_model_gene_overlap(
         model_name = model.lower()
         if model_name in _ENSEMBL_MODELS:
             ref = _normalize_ensembl_set(genes)
-            overlap = len(file_ensembl & ref) / len(ref) if ref else 0.0
+            file_genes = file_ensembl
+            overlap = len(file_genes & ref) / len(file_genes) if file_genes else 0.0
             metric = "Ensembl IDs"
             threshold = min_ensembl_overlap
         else:
             ref = _normalize_gene_set(genes, uppercase=True)
-            overlap = len(file_symbols_upper & ref) / len(ref) if ref else 0.0
+            file_genes = file_symbols_upper
+            overlap = len(file_genes & ref) / len(file_genes) if file_genes else 0.0
             metric = "gene symbols"
             threshold = min_symbol_overlap
 
         if not ref:
             findings.append(Finding(Level.WARN, f"{model_name}: vocab is empty"))
             continue
+        if not file_genes:
+            findings.append(Finding(Level.ERROR, f"{model_name}: no dataset {metric} available"))
+            continue
 
+        n_matched = len(file_genes & ref)
+        n_dataset = len(file_genes)
+        n_vocab = len(ref)
         pct = 100.0 * overlap
+        overlap_detail = (
+            f"{n_matched}/{n_dataset} dataset {metric} found in model vocab "
+            f"({n_vocab} vocab genes)"
+        )
         if overlap < threshold:
             findings.append(
                 Finding(
                     Level.ERROR,
-                    f"{model_name}: only {pct:.1f}% of model {metric} found in file "
-                    f"({len(ref)} reference genes)",
+                    f"{model_name}: only {pct:.1f}% overlap; {overlap_detail}",
                 )
             )
         elif overlap < 0.5:
             findings.append(
-                Finding(Level.WARN, f"{model_name}: {pct:.1f}% of model {metric} found in file")
+                Finding(
+                    Level.WARN,
+                    f"{model_name}: {pct:.1f}% overlap; {overlap_detail}",
+                )
             )
         else:
             findings.append(
-                Finding(Level.OK, f"{model_name}: {pct:.1f}% of model {metric} found in file")
+                Finding(
+                    Level.OK,
+                    f"{model_name}: {pct:.1f}% overlap; {overlap_detail}",
+                )
             )
 
     return findings
@@ -504,7 +516,7 @@ def check_cross_file_consistency(paths: Sequence[Path]) -> list[Finding]:
         ref = ad.read_h5ad(ref_path, backed="r")
         ref_obs = list(ref.obs_names)
         ref_var = list(ref.var_names)
-        ref.close()
+        ref.file.close()
     except Exception as exc:
         return [Finding(Level.ERROR, f"Cannot read reference {ref_path.name}: {exc}")]
 
@@ -521,7 +533,9 @@ def check_cross_file_consistency(paths: Sequence[Path]) -> list[Finding]:
             var = list(adata.var_names)
             adata.file.close()
         except Exception as exc:
-            findings.append(Finding(Level.ERROR, f"{path.name}: cannot read for cross-check: {exc}"))
+            findings.append(
+                Finding(Level.ERROR, f"{path.name}: cannot read for cross-check: {exc}")
+            )
             continue
 
         if obs != ref_obs:
@@ -594,7 +608,11 @@ def validate_path(
             )
             for path in paths
         ]
-        cross = check_cross_file_consistency(paths)
+        cross = (
+            check_cross_file_consistency(paths)
+            if any(path.name == "reference.h5ad" for path in paths)
+            else []
+        )
         if cross:
             summary = FileReport(path=input_path / "[cross-file]")
             for finding in cross:
@@ -628,4 +646,3 @@ def format_report(reports: Sequence[FileReport], *, input_path: Path) -> str:
 
     lines.append(f"Summary: {n_ok} ok, {n_warn} warn, {n_err} error (of {len(reports)} reports)")
     return "\n".join(lines)
-

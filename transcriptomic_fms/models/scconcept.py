@@ -8,6 +8,7 @@ import scanpy as sc
 
 from transcriptomic_fms.models.base import BaseEmbeddingModel
 from transcriptomic_fms.models.registry import register_model
+from transcriptomic_fms.utils.gene_ids import normalize_ensembl_ids
 from transcriptomic_fms.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -92,13 +93,13 @@ class SCConceptModel(BaseEmbeddingModel):
         3. ``var.index`` (assumes index contains gene IDs)
         """
         if "gene_id" in adata.var.columns:
-            return adata.var["gene_id"].tolist()
+            return normalize_ensembl_ids(adata.var["gene_id"])
 
         if "ensembl_id" in adata.var.columns:
-            return adata.var["ensembl_id"].tolist()
+            return normalize_ensembl_ids(adata.var["ensembl_id"])
 
         if adata.var_names is not None and len(adata.var_names) > 0:
-            return adata.var_names.tolist()
+            return normalize_ensembl_ids(adata.var_names)
 
         raise ValueError(
             "Cannot determine gene IDs for scConcept. "
@@ -164,6 +165,9 @@ class SCConceptModel(BaseEmbeddingModel):
                 "Run preprocess() first, or provide the correct column name via "
                 "`--gene-id-column`."
             )
+
+        adata = adata.copy()
+        adata.var[gene_id_column] = normalize_ensembl_ids(adata.var[gene_id_column])
 
         # Instantiate scConcept object
         concept_kwargs: dict[str, Any] = {}
