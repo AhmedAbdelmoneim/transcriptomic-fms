@@ -13,6 +13,7 @@ import scipy.sparse
 
 from transcriptomic_fms.models.base import BaseEmbeddingModel
 from transcriptomic_fms.models.registry import register_model
+from transcriptomic_fms.utils.gene_ids import normalize_ensembl_ids
 from transcriptomic_fms.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -44,7 +45,7 @@ except ImportError:
 
 try:
     from datasets import load_from_disk
-except ImportError:
+except Exception:
     load_from_disk = None
 
 # Default Geneformer model HuggingFace repository
@@ -317,17 +318,14 @@ class GeneformerModel(BaseEmbeddingModel):
         Raises:
             ValueError: If Ensembl IDs cannot be determined
         """
-        # Check for ensembl_id column
         if "ensembl_id" in adata.var.columns:
-            return adata.var["ensembl_id"].tolist()
+            return normalize_ensembl_ids(adata.var["ensembl_id"])
 
-        # Check for gene_id column (common alternative)
         if "gene_id" in adata.var.columns:
-            return adata.var["gene_id"].tolist()
+            return normalize_ensembl_ids(adata.var["gene_id"])
 
-        # Use index as Ensembl IDs
         if adata.var_names is not None and len(adata.var_names) > 0:
-            return adata.var_names.tolist()
+            return normalize_ensembl_ids(adata.var_names)
 
         raise ValueError(
             "Cannot determine Ensembl IDs. "
@@ -535,6 +533,47 @@ class GeneformerModel(BaseEmbeddingModel):
             )
 
         return output_dir
+
+    def _validate_tokenized_dataset(self, input_data_path: str) -> None:
+        """Fail early when tokenization produced no usable integer token IDs."""
+        if load_from_disk is None:
+            raise ImportError(
+                "datasets is required to validate Geneformer tokenization. "
+                "Install the Geneformer dependencies."
+            )
+
+        dataset = load_from_disk(input_data_path)
+        if len(dataset) == 0:
+            raise RuntimeError(
+                "Geneformer tokenization produced an empty dataset. "
+                "Check that adata.var['ensembl_id'] overlaps Geneformer's token dictionary."
+            )
+        if "input_ids" not in dataset.column_names:
+            raise RuntimeError(
+                "Geneformer tokenized dataset is missing the 'input_ids' column. "
+                "Check the installed Geneformer tokenizer version and input gene metadata."
+            )
+
+        sample_size = min(100, len(dataset))
+        nonempty_seen = False
+        for row_idx in range(sample_size):
+            input_ids = dataset[row_idx]["input_ids"]
+            if len(input_ids) == 0:
+                continue
+            nonempty_seen = True
+            ids = np.asarray(input_ids)
+            if not np.issubdtype(ids.dtype, np.integer):
+                raise RuntimeError(
+                    "Geneformer tokenization produced non-integer input_ids "
+                    f"(dtype={ids.dtype}). Check that gene identifiers are valid Ensembl IDs "
+                    "and overlap Geneformer's token dictionary."
+                )
+
+        if not nonempty_seen:
+            raise RuntimeError(
+                "Geneformer tokenization produced only empty input_ids in the sampled rows. "
+                "Check that adata.var['ensembl_id'] overlaps Geneformer's token dictionary."
+            )
 
     def _load_hf_model(self, model_dir: Path):
         """Load raw HuggingFace transformer from Geneformer model directory."""
@@ -786,6 +825,7 @@ class GeneformerModel(BaseEmbeddingModel):
                 input_data_path = str([d for d in tokenized_contents if d.is_dir()][0])
             else:
                 raise RuntimeError("Could not find valid tokenized dataset directory.")
+            self._validate_tokenized_dataset(input_data_path)
 
             # 2. Extract Embeddings
             extractor = self._get_extractor()

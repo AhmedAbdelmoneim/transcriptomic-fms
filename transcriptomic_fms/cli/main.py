@@ -2,6 +2,7 @@
 
 import argparse
 import gc
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -15,6 +16,38 @@ from transcriptomic_fms.utils.logging import get_logger, setup_logging
 
 # Set up logging
 logger = get_logger(__name__)
+
+
+def _log_cuda_runtime() -> None:
+    """Log the CUDA devices visible to PyTorch for GPU/MIG auditability."""
+    try:
+        import torch
+    except ImportError:
+        logger.info("CUDA runtime: torch is not installed")
+        return
+
+    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "<unset>")
+    if not torch.cuda.is_available():
+        logger.info("CUDA runtime: unavailable (CUDA_VISIBLE_DEVICES=%s)", cuda_visible_devices)
+        return
+
+    device_count = torch.cuda.device_count()
+    logger.info(
+        "CUDA runtime: available devices=%d CUDA_VISIBLE_DEVICES=%s",
+        device_count,
+        cuda_visible_devices,
+    )
+    for idx in range(device_count):
+        props = torch.cuda.get_device_properties(idx)
+        total_gib = props.total_memory / 1024**3
+        logger.info(
+            "CUDA device %d: name=%s total_memory=%.2f GiB capability=%s.%s",
+            idx,
+            props.name,
+            total_gib,
+            props.major,
+            props.minor,
+        )
 
 
 def _load_hvg_list(hvg_list_path: str) -> list[str]:
@@ -140,6 +173,7 @@ def embed_command(args: argparse.Namespace, model_args: dict[str, Any]) -> None:
     try:
         logger.info(f"Loading model: {args.model}")
         model = get_model(args.model, **model_args)
+        _log_cuda_runtime()
     except ImportError as e:
         # Check if this is a missing dependency error
         dep_group = None
@@ -405,6 +439,33 @@ def install_model_command(args: argparse.Namespace) -> None:
     print("Run the command above to actually install dependencies.")
 
 
+def pre_embedding_check_command(args: argparse.Namespace) -> None:
+    """Validate h5ad files before running model embedding."""
+    from transcriptomic_fms.validation.embed_inputs import (
+        format_report,
+        load_bundled_model_gene_lists,
+        validate_path,
+    )
+
+    try:
+        model_gene_lists = load_bundled_model_gene_lists()
+        reports, exit_code = validate_path(
+            Path(args.input),
+            gene_name_column=args.gene_name_column,
+            ensembl_id_column=args.ensembl_id_column,
+            model_gene_lists=model_gene_lists,
+            min_symbol_overlap=args.min_symbol_overlap,
+            min_ensembl_overlap=args.min_ensembl_overlap,
+            skip_embed_outputs=not args.include_embed_outputs,
+        )
+    except (FileNotFoundError, NotADirectoryError, ValueError, KeyError) as e:
+        logger.error(f"Pre-embedding check failed: {e}")
+        sys.exit(2)
+
+    print(format_report(reports, input_path=Path(args.input)))
+    sys.exit(exit_code)
+
+
 def main() -> None:
     """Main CLI entry point."""
     # Set up logging
@@ -481,6 +542,47 @@ def main() -> None:
         "--model", required=True, help="Model name to install dependencies for"
     )
     install_parser.set_defaults(func=install_model_command)
+
+    # Pre-embedding validation command
+    check_parser = subparsers.add_parser(
+        "pre-embedding-check",
+        help="Validate h5ad files before embedding without loading model packages",
+        allow_abbrev=False,
+    )
+    check_parser.add_argument(
+        "--input",
+        required=True,
+        type=Path,
+        help="Input .h5ad file or directory containing .h5ad files",
+    )
+    check_parser.add_argument(
+        "--min-symbol-overlap",
+        type=float,
+        default=0.1,
+        help="Minimum fraction of dataset symbol genes required in the model vocab",
+    )
+    check_parser.add_argument(
+        "--min-ensembl-overlap",
+        type=float,
+        default=0.1,
+        help="Minimum fraction of dataset Ensembl genes required in the model vocab",
+    )
+    check_parser.add_argument(
+        "--gene-name-column",
+        default="gene_name",
+        help="Expected gene-symbol column in adata.var",
+    )
+    check_parser.add_argument(
+        "--ensembl-id-column",
+        default="ensembl_id",
+        help="Expected Ensembl ID column in adata.var",
+    )
+    check_parser.add_argument(
+        "--include-embed-outputs",
+        action="store_true",
+        help="Include existing *_embeddings.h5ad and *_emb.h5ad files in directory checks",
+    )
+    check_parser.set_defaults(func=pre_embedding_check_command)
 
     # Parse known arguments and allow unknown ones for model-specific params
     args, unknown = parser.parse_known_args()
