@@ -14,6 +14,7 @@ from transcriptomic_fms.utils.gene_ids import (
     normalize_ensembl_id,
     normalize_ensembl_ids,
     normalize_ensembl_set,
+    normalize_gene_symbol,
 )
 
 
@@ -38,6 +39,12 @@ class TestNormalizeEnsemblIds(unittest.TestCase):
             normalize_ensembl_set(values),
             {"ENSG00000000003", "ENSG00000000005", "TSPAN6"},
         )
+
+    def test_normalize_gene_symbol_uppercases(self) -> None:
+        self.assertEqual(normalize_gene_symbol("Xkr4"), "XKR4")
+        self.assertEqual(normalize_gene_symbol("  gapdh  "), "GAPDH")
+        self.assertEqual(normalize_gene_symbol(""), "")
+        self.assertEqual(normalize_gene_symbol("nan"), "nan")
 
 
 class TestModelEnsemblExtraction(unittest.TestCase):

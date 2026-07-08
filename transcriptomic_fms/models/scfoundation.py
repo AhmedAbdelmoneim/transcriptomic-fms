@@ -9,6 +9,7 @@ import scanpy as sc
 
 from transcriptomic_fms.models.base import BaseEmbeddingModel
 from transcriptomic_fms.models.registry import register_model
+from transcriptomic_fms.utils.gene_ids import normalize_gene_symbol
 from transcriptomic_fms.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -408,6 +409,19 @@ class SCFoundationModel(BaseEmbeddingModel):
             "  - var['gene_name'] column exists"
         )
 
+    def _build_expression_dataframe(self, adata: sc.AnnData) -> pd.DataFrame:
+        """Build a cell x gene matrix with uppercase symbols for vocab matching."""
+        gene_symbols = [normalize_gene_symbol(symbol) for symbol in self._get_gene_symbols(adata)]
+        if hasattr(adata.X, "toarray"):
+            X = adata.X.toarray()
+        else:
+            X = np.asarray(adata.X)
+
+        X_df = pd.DataFrame(X, index=adata.obs_names, columns=gene_symbols)
+        if X_df.columns.duplicated().any():
+            X_df = X_df.T.groupby(level=0).sum().T
+        return X_df
+
     def preprocess(self, adata: sc.AnnData, output_path: Optional[Path] = None) -> sc.AnnData:
         """
         Preprocess data for scFoundation.
@@ -420,6 +434,8 @@ class SCFoundationModel(BaseEmbeddingModel):
           * ``var['gene_name']``
           * ``var.index`` (fallback)
         - Data is expected to contain (raw or normalized) counts in ``adata.X``.
+        - Gene symbols are uppercased before matching scFoundation's human vocab
+          (e.g. mouse ``Xkr4`` matches ``XKR4``).
 
         This method ensures that the data matches the 19264 gene list required by scFoundation.
 
@@ -429,14 +445,7 @@ class SCFoundationModel(BaseEmbeddingModel):
         """
         adata = adata.copy()
 
-        # Convert to DataFrame for gene selection
-        gene_symbols = self._get_gene_symbols(adata)
-
-        # Create DataFrame with cells as rows and genes as columns
-        if hasattr(adata.X, "toarray"):
-            X_df = pd.DataFrame(adata.X.toarray(), index=adata.obs_names, columns=gene_symbols)
-        else:
-            X_df = pd.DataFrame(adata.X, index=adata.obs_names, columns=gene_symbols)
+        X_df = self._build_expression_dataframe(adata)
 
         # Match genes to scFoundation's 19264 gene list (reorder, select, pad as needed)
         logger.info("Converting gene features to match scFoundation's 19264 gene list")

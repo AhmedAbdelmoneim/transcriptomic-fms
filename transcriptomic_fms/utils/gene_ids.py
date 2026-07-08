@@ -38,3 +38,11 @@ def normalize_ensembl_set(values: Iterable[object]) -> set[str]:
         and str(gene).strip().lower() != "nan"
         and not _SPECIAL_TOKEN_RE.match(str(gene).strip())
     }
+
+
+def normalize_gene_symbol(value: object) -> str:
+    """Normalize gene symbols for case-insensitive vocabulary matching."""
+    text = str(value).strip()
+    if not text or text.lower() == "nan" or _SPECIAL_TOKEN_RE.match(text):
+        return text
+    return text.upper()
