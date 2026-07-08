@@ -10,6 +10,7 @@ import torch
 
 from transcriptomic_fms.models.base import BaseEmbeddingModel
 from transcriptomic_fms.models.registry import register_model
+from transcriptomic_fms.utils.gene_ids import normalize_gene_symbol
 from transcriptomic_fms.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -191,15 +192,15 @@ class SCGPTModel(BaseEmbeddingModel):
         """
         adata = adata.copy()
 
-        # Determine gene symbols
-        gene_symbols = self._get_gene_symbols(adata)
+        # Uppercase symbols for scGPT human vocab matching (e.g. mouse Pf4 -> PF4).
+        gene_symbols = [
+            normalize_gene_symbol(symbol) for symbol in self._get_gene_symbols(adata)
+        ]
         adata.var["gene_symbols"] = gene_symbols
 
         # Handle HVG selection
         if self.hvg_list is not None:
-            # Use pre-provided HVG list
-            # Check which genes are available
-            available_hvgs = [g for g in self.hvg_list if g in adata.var_names]
+            available_hvgs = self._resolve_hvg_columns(adata, self.hvg_list)
             if len(available_hvgs) == 0:
                 raise ValueError(
                     f"None of the provided HVG genes are found in adata.var_names. "
@@ -250,6 +251,44 @@ class SCGPTModel(BaseEmbeddingModel):
         if output_path:
             adata.write(output_path)
 
+        return adata
+
+    def _resolve_hvg_columns(self, adata: sc.AnnData, hvg_list: list[str]) -> list[str]:
+        """Map an HVG list onto ``adata.var_names`` with case-insensitive fallback."""
+        available: list[str] = []
+        seen: set[str] = set()
+
+        exact = set(adata.var_names.astype(str))
+        by_upper = {
+            normalize_gene_symbol(name): str(name) for name in adata.var_names.astype(str)
+        }
+
+        for gene in hvg_list:
+            gene_str = str(gene)
+            if gene_str in exact and gene_str not in seen:
+                available.append(gene_str)
+                seen.add(gene_str)
+                continue
+            mapped = by_upper.get(normalize_gene_symbol(gene_str))
+            if mapped is not None and mapped not in seen:
+                available.append(mapped)
+                seen.add(mapped)
+
+        return available
+
+    def _normalize_gene_symbols_column(self, adata: sc.AnnData) -> sc.AnnData:
+        """Ensure ``var['gene_symbols']`` exists and is uppercased for vocab matching."""
+        if "gene_symbols" not in adata.var.columns:
+            adata = adata.copy()
+            adata.var["gene_symbols"] = [
+                normalize_gene_symbol(symbol) for symbol in self._get_gene_symbols(adata)
+            ]
+            return adata
+
+        symbols = [normalize_gene_symbol(symbol) for symbol in adata.var["gene_symbols"]]
+        if list(adata.var["gene_symbols"]) != symbols:
+            adata = adata.copy()
+            adata.var["gene_symbols"] = symbols
         return adata
 
     def _model_exists(self) -> bool:
@@ -330,10 +369,8 @@ class SCGPTModel(BaseEmbeddingModel):
                 "via --model-dir argument, or enable auto_download."
             )
 
-        # Ensure gene_symbols column exists (should already be set by preprocess)
-        if "gene_symbols" not in adata.var.columns:
-            gene_symbols = self._get_gene_symbols(adata)
-            adata.var["gene_symbols"] = gene_symbols
+        # Ensure gene_symbols are uppercased for human-vocab matching
+        adata = self._normalize_gene_symbols_column(adata)
 
         vocab_file = self.model_dir / "vocab.json"
 
@@ -341,8 +378,8 @@ class SCGPTModel(BaseEmbeddingModel):
             with open(vocab_file, "r") as f:
                 vocab = json.load(f)
 
-            # scGPT vocab keys are the gene symbols
-            vocab_genes = set(vocab.keys())
+            # scGPT vocab keys are uppercase gene symbols
+            vocab_genes = {normalize_gene_symbol(gene) for gene in vocab.keys()}
 
             # Identify genes that are in the model vocabulary
             common_genes = adata.var[adata.var["gene_symbols"].isin(vocab_genes)].index
@@ -355,7 +392,8 @@ class SCGPTModel(BaseEmbeddingModel):
 
             logger.info(
                 f"Safety filter: Reduced from {adata.n_obs} to {adata_safe.n_obs} cells "
-                f"after intersecting with model vocabulary."
+                f"after intersecting with model vocabulary "
+                f"({len(common_genes)}/{adata.n_vars} genes in vocab)."
             )
             adata = adata_safe
 
@@ -478,9 +516,7 @@ class SCGPTModel(BaseEmbeddingModel):
 
         device = torch.device(self.device if isinstance(self.device, str) else self.device)
         gene_col = "gene_symbols"
-        if gene_col not in adata.var.columns:
-            adata = adata.copy()
-            adata.var[gene_col] = self._get_gene_symbols(adata)
+        adata = self._normalize_gene_symbols_column(adata)
 
         vocab = _GeneVocab.from_file(str(vocab_file))
         pad_token = "<pad>"
